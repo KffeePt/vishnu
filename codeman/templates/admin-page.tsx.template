@@ -1,0 +1,36 @@
+'use client';
+
+import { useAuth } from "@/context/AuthContext";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+// {{IMPORTS}}
+
+export default function {{COMPONENT_NAME}}() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading) {
+        if (!user) {
+            router.push('/login');
+        } else if (!user.customClaims?.admin && !user.customClaims?.owner) {
+            router.push('/'); // Redirect unauthorized users home
+        }
+    }
+  }, [user, loading, router]);
+
+  if (loading) return <div className="p-8 flex justify-center">Loading...</div>;
+  
+  // Render null while redirecting if unauthorized
+  if (!user || (!user.customClaims?.admin && !user.customClaims?.owner)) return null;
+
+  return (
+    <div className="w-full min-h-screen p-8">
+        <h1 className="text-3xl font-bold mb-6 text-primary">Admin/Owner Area</h1>
+        <div className="bg-card rounded-lg border p-6 shadow-sm">
+            <p className="mb-4 text-muted-foreground">This page is restricted to Admins and Owners.</p>
+            {/* {{CONTENT}} */}
+        </div>
+    </div>
+  );
+}

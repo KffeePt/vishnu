@@ -1,0 +1,33 @@
+import { NextResponse, NextRequest } from "next/server";
+import { getAdmin } from "@/config/firebase-admin";
+
+const adminInstance = getAdmin();
+
+export async function GET(request: NextRequest) {
+  const authorization = request.headers.get("Authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return NextResponse.json({ message: "Unauthorized: Missing Token" }, { status: 401 });
+  }
+
+  try {
+    const idToken = authorization.split("Bearer ")[1];
+    // Verify the ID token using Firebase Admin SDK
+    const decodedToken = await adminInstance.auth().verifyIdToken(idToken);
+
+    // Enforcement: Only 'admin' or 'owner' claims allowed
+    if (decodedToken.admin !== true && decodedToken.owner !== true) {
+        console.warn(`Access denied for ${decodedToken.uid}: Missing admin/owner claim.`);
+        return NextResponse.json({ message: "Forbidden: Insufficient Permissions" }, { status: 403 });
+    }
+
+    // --- YOUR LOGIC HERE ---
+    return NextResponse.json({ 
+        message: "Admin/Owner Access Granted", 
+        user: { uid: decodedToken.uid, email: decodedToken.email } 
+    });
+
+  } catch (error: any) {
+    console.error("Auth Error:", error.message);
+    return NextResponse.json({ message: "Internal Server Error" }, { status: 500 });
+  }
+}
