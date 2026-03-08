@@ -155,12 +155,17 @@ GEMINI_API_KEY=${geminiKey}
         fs.writeFileSync(envPath, newEnvContent);
         console.log(chalk.green('✅ .env file generated successfully.'));
 
-        // Run firebase init
-        console.log(chalk.blue('\n🔥 Running Firebase Init...'));
-        await new Promise<void>((resolve) => {
-            const child = spawn('firebase', ['init'], { stdio: 'inherit', shell: true });
-            child.on('close', () => resolve());
-        });
+        // Run firebase init ONLY if firebase.json doesn't exist yet
+        const firebaseJsonPath = path.join(process.cwd(), 'firebase.json');
+        if (!fs.existsSync(firebaseJsonPath)) {
+            console.log(chalk.blue('\n🔥 Running Firebase Init...'));
+            await new Promise<void>((resolve) => {
+                const child = spawn('firebase', ['init'], { stdio: 'inherit', shell: true });
+                child.on('close', () => resolve());
+            });
+        } else {
+            console.log(chalk.green('✅ Firebase already initialized (firebase.json found). Skipping firebase init.'));
+        }
 
         // Reload dotenv
         const dotenv = await import('dotenv');

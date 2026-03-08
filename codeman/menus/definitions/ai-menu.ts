@@ -1,4 +1,4 @@
-import { MenuDefinition } from '../core/types';
+import { MenuDefinition } from '../../schemas/menu-schema';
 
 export const AIMenuDef: MenuDefinition = {
     id: 'ai-menu',

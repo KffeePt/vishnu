@@ -25,7 +25,7 @@ export const DeleteAssetsMenu: MenuNode = {
             { name: '⬅️  Back', value: 'back' }
         ];
 
-        const choice = await List('🗑️  Delete Project Assets', options);
+        const choice = await List('🗑️  Delete Project Assets', options as any);
 
         if (choice === 'back' || choice === '__BACK__') return 'boilerplates';
 

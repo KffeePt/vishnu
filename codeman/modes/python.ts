@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { spawn } from 'child_process';
+import { z } from 'zod';
 
 export class PythonStrategy implements ProjectStrategy {
     type = 'python' as const;
@@ -24,6 +25,7 @@ export class PythonStrategy implements ProjectStrategy {
     async getTestRunnerMenu(): Promise<MenuNode> {
         return {
             id: 'python-tests',
+            propsSchema: z.any(),
             render: async () => {
                 console.log(chalk.yellow('Python test runner not yet implemented.'));
                 await new Promise(r => setTimeout(r, 1000));

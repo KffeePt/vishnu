@@ -15,6 +15,11 @@ export const SettingsMenuDef: MenuDefinition = {
             value: 'sys-gemini',
             action: { type: 'script', handler: 'manageGeminiKeys' }
         },
+        {
+            label: '🔧 Maintenance',
+            value: 'maintenance',
+            action: { type: 'navigate', target: 'maintenance-menu' }
+        },
         { label: '---', value: 'sep1', type: 'separator' },
         {
             label: '⬅️  Back',

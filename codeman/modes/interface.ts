@@ -1,5 +1,13 @@
 import { MenuNode } from '../core/types';
 
+export interface PackageModule {
+  id: string;
+  name: string;
+  description: string;
+  scaffoldNextJs: (targetPath: string) => Promise<void>;
+  scaffoldFlutter: (targetPath: string) => Promise<void>;
+}
+
 export interface ProjectStrategy {
     type: 'nextjs' | 'flutter' | 'python' | 'cpp' | 'custom' | 'unknown';
 
@@ -23,4 +31,9 @@ export interface ProjectStrategy {
      * Execute a specific dev command (like 'npm run dev' or 'flutter run').
      */
     runDevServer: () => Promise<void>;
+
+    /**
+     * Returns optional SaaS packages available for this framework.
+     */
+    getPackageOptions?: () => Promise<PackageModule[]>;
 }

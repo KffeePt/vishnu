@@ -1,4 +1,4 @@
-import { ProjectStrategy } from './interface';
+import { ProjectStrategy, PackageModule } from './interface';
 import { MenuNode } from '../core/types';
 import { List } from '../components/list';
 import fs from 'fs';
@@ -68,6 +68,53 @@ export class NextJsStrategy implements ProjectStrategy {
 
     async runDevServer(): Promise<void> {
         await this.spawnCommand('npm', ['run', 'dev']);
+    }
+
+    async getPackageOptions(): Promise<PackageModule[]> {
+        return [
+            {
+                id: 'shop',
+                name: 'Shop & Inventory',
+                description: 'E-commerce with product listing, inventory, and employees.',
+                scaffoldNextJs: async (target) => { console.log(chalk.gray(`Mock scaffolding Shop to ${target}`)); },
+                scaffoldFlutter: async (target) => { console.log(chalk.gray(`Mock scaffolding Shop to ${target}`)); }
+            },
+            {
+                id: 'community',
+                name: 'Blog & Community',
+                description: 'Public blog, forums, and encrypted private messaging.',
+                scaffoldNextJs: async (target) => { console.log(chalk.gray(`Mock scaffolding Community to ${target}`)); },
+                scaffoldFlutter: async (target) => { console.log(chalk.gray(`Mock scaffolding Community to ${target}`)); }
+            },
+            {
+                id: 'trading',
+                name: 'Trading / Gambling',
+                description: 'Markets, betting, and portfolio management.',
+                scaffoldNextJs: async (target) => { console.log(chalk.gray(`Mock scaffolding Trading to ${target}`)); },
+                scaffoldFlutter: async (target) => { console.log(chalk.gray(`Mock scaffolding Trading to ${target}`)); }
+            },
+            {
+                id: 'crypto',
+                name: 'Crypto Panel',
+                description: 'Web3 connect, BTC/ETH dashboard.',
+                scaffoldNextJs: async (target) => { console.log(chalk.gray(`Mock scaffolding Crypto to ${target}`)); },
+                scaffoldFlutter: async (target) => { console.log(chalk.gray(`Mock scaffolding Crypto to ${target}`)); }
+            },
+            {
+                id: 'artist',
+                name: 'Artist Package',
+                description: 'Patreon-style creator subscriptions and content.',
+                scaffoldNextJs: async (target) => { console.log(chalk.gray(`Mock scaffolding Artist to ${target}`)); },
+                scaffoldFlutter: async (target) => { console.log(chalk.gray(`Mock scaffolding Artist to ${target}`)); }
+            },
+            {
+                id: 'tracking',
+                name: 'Map & Tracking',
+                description: 'Real-time location with Firebase RTDB + Google Maps.',
+                scaffoldNextJs: async (target) => { console.log(chalk.gray(`Mock scaffolding Tracking to ${target}`)); },
+                scaffoldFlutter: async (target) => { console.log(chalk.gray(`Mock scaffolding Tracking to ${target}`)); }
+            }
+        ];
     }
 
     // Helper to serve report safely

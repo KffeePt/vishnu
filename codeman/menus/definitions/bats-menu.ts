@@ -5,6 +5,36 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import chalk from 'chalk';
+import { registerScript } from '../../core/schema-factory';
+
+registerScript('runBatsScript', async (args: any) => {
+    const { script, projectRoot, isBat } = args;
+    const batsDir = path.join(projectRoot, 'bats');
+    console.log(chalk.yellow(`\n🚀 Executing ${script}...`));
+    const scriptPath = path.join(batsDir, script);
+
+    const command = isBat ? scriptPath : 'powershell';
+    const argsArray = isBat ? [] : ['-ExecutionPolicy', 'Bypass', '-File', scriptPath];
+
+    return new Promise<void>((resolve) => {
+        const child = spawn(command, argsArray, {
+            cwd: projectRoot,
+            stdio: 'inherit',
+            shell: true
+        });
+
+        child.on('close', (code) => {
+            console.log(chalk.gray(`\nProcess exited with code ${code}`));
+            console.log(chalk.dim('Press any key to continue...'));
+            process.stdin.setRawMode(true);
+            process.stdin.resume();
+            process.stdin.once('data', () => {
+                process.stdin.setRawMode(false);
+                resolve();
+            });
+        });
+    });
+});
 
 async function getBatsOptions(s: GlobalState): Promise<MenuOption[]> {
     const options: MenuOption[] = [];
@@ -33,32 +63,8 @@ async function getBatsOptions(s: GlobalState): Promise<MenuOption[]> {
                 value: `run-${script}`,
                 action: {
                     type: 'script',
-                    handler: async () => {
-                        console.log(chalk.yellow(`\n🚀 Executing ${script}...`));
-                        const scriptPath = path.join(batsDir, script);
-
-                        const command = isBat ? scriptPath : 'powershell';
-                        const args = isBat ? [] : ['-ExecutionPolicy', 'Bypass', '-File', scriptPath];
-
-                        return new Promise<void>((resolve) => {
-                            const child = spawn(command, args, {
-                                cwd: projectRoot,
-                                stdio: 'inherit',
-                                shell: true
-                            });
-
-                            child.on('close', (code) => {
-                                console.log(chalk.gray(`\nProcess exited with code ${code}`));
-                                console.log(chalk.dim('Press any key to continue...'));
-                                process.stdin.setRawMode(true);
-                                process.stdin.resume();
-                                process.stdin.once('data', () => {
-                                    process.stdin.setRawMode(false);
-                                    resolve();
-                                });
-                            });
-                        });
-                    }
+                    handler: 'runBatsScript',
+                    args: { script, projectRoot, isBat }
                 }
             });
         }

@@ -6,26 +6,35 @@
     "type": "module",
     "scripts": {
         "codeman": "tsx watch codeman/interactive-cli.ts",
-        "test:codeman": "vitest run tests"
+        "lint": "tsc --noEmit",
+        "test": "vitest run tests",
+        "build:verify": "tsx codeman/verify-build.ts",
+        "firebase:setup": "tsx scripts/setup_firebase_credentials.ts"
     },
     "dependencies": {
+        "@google-cloud/resource-manager": "^6.2.1",
+        "@google-cloud/secret-manager": "^6.1.1",
+        "@google/generative-ai": "^0.1.0",
         "chalk": "^5.3.0",
+        "clipboardy": "^5.3.1",
         "commander": "^11.1.0",
         "dotenv": "^16.3.1",
-        "@google/generative-ai": "^0.1.0",
         "firebase-admin": "^12.0.0",
         "fs-extra": "^11.2.0",
+        "glob": "^13.0.6",
+        "ignore": "^7.0.5",
         "inquirer": "^9.2.14",
         "open": "^10.0.0",
-        "ora": "^8.0.1",
-        "tsx": "^4.7.0",
+        "ora": "^8.2.0",
         "ts-morph": "^21.0.0",
+        "tsx": "^4.7.0",
         "zod": "^3.22.4"
     },
     "devDependencies": {
-        "vitest": "^1.2.0",
+        "@types/fs-extra": "^11.0.4",
         "@types/node": "^20.11.0",
-        "@types/fs-extra": "^11.0.4"
+        "typescript": "^5.3.3",
+        "vitest": "^1.2.0"
     },
     "bin": {
         "codeman": "bin/vishnu.js"

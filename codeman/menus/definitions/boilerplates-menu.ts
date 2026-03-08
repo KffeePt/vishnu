@@ -1,5 +1,5 @@
-import { MenuDefinition, MenuOption } from '../core/types';
-import { GlobalState } from '../core/state';
+import { MenuDefinition, MenuOption } from '../../schemas/menu-schema';
+import { GlobalState } from '../../core/state';
 
 export const getBoilerplateOptions = async (state: GlobalState): Promise<MenuOption[]> => {
     const projectType = state.project.type;
@@ -16,6 +16,7 @@ export const getBoilerplateOptions = async (state: GlobalState): Promise<MenuOpt
             { label: '🖥️  Create E2E Test (Playwright)', value: 'e2e-test', action: { type: 'script', handler: 'create-e2e-test' } },
             { label: '---', value: 'sep2', type: 'separator' },
             { label: '🚀 Full Stack Feature', value: 'full-stack', action: { type: 'script', handler: 'create-full-stack' } },
+            { label: '📦 Add SaaS Package...', value: 'add-package', action: { type: 'script', handler: 'add-package' } },
             { label: '🔒 Admin Generators...', value: 'admin-menu', action: { type: 'navigate', target: 'admin-gen' } }, // TODO: Migrate Admin Menu
             { label: '🔧 Refactor Component', value: 'refactor-comp', action: { type: 'script', handler: 'refactor-comp' } },
             { label: '---', value: 'sep3', type: 'separator' },

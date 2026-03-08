@@ -21,6 +21,9 @@
 namespace fs = std::filesystem;
 using namespace std;
 
+const string INSTALLER_VERSION = "3.0.0";
+
+
 // --- Colors ---
 const string RESET = "\033[0m";
 const string RED = "\033[31m";
@@ -362,16 +365,50 @@ int main() {
 
         if (fs::exists("vishnu")) {
              log("[INFO] 'vishnu' directory found.", GREEN);
-             runCommand("cd vishnu && git fetch origin");
-             string count = getCommandOutput("cd vishnu && git rev-list --count HEAD..origin/main");
-             count.erase(remove_if(count.begin(), count.end(), ::isspace), count.end());
-             
-             if(!count.empty() && count != "0") {
-                 cout << YELLOW << ">> Local system is behind by " << count << " commits." << RESET << endl;
-                 // Auto-update or ask? Let's just update for smoother UX or ask if significant?
-                 // User wants "Update/Repair" context.
-                 runCommand("cd vishnu && git pull origin main");
+             fs::current_path("vishnu");
+
+             string currentVersion = "unknown";
+             if (fs::exists("version.json")) {
+                 string content = getCommandOutput("type version.json");
+                 smatch match;
+                 if (regex_search(content, match, regex("\"version\"\\s*:\\s*\"([^\"]+)\""))) {
+                     currentVersion = match[1];
+                 }
              }
+
+             log("Current version: " + currentVersion, CYAN);
+             
+             runCommand("git fetch origin main >nul 2>&1");
+             
+             string remoteVersion = "unknown";
+             string remoteMeta = getCommandOutput("git show origin/main:version.json 2>nul");
+             smatch rMatch;
+             if (regex_search(remoteMeta, rMatch, regex("\"version\"\\s*:\\s*\"([^\"]+)\""))) {
+                 remoteVersion = rMatch[1];
+             }
+
+             if (remoteVersion != "unknown" && remoteVersion != currentVersion) {
+                 cout << YELLOW << "\n✨ Update available! (" << currentVersion << " -> " << remoteVersion << ")" << RESET << endl;
+                 string ans = ask("Update now? [Y/n]", "Y");
+                 if (ans == "Y" || ans == "y") {
+                     log("Updating repository...", CYAN);
+                     runCommand("git pull origin main");
+                 } else {
+                     log("[WARN] Skipping update.", YELLOW);
+                 }
+             } else {
+                 string count = getCommandOutput("git rev-list --count HEAD..origin/main");
+                 count.erase(remove_if(count.begin(), count.end(), ::isspace), count.end());
+                 if(!count.empty() && count != "0") {
+                     log(">> Local system is behind by " + count + " commits.", YELLOW);
+                     string ans = ask("Pull latest commits? [Y/n]", "Y");
+                     if (ans == "Y" || ans == "y") runCommand("git pull origin main");
+                 } else {
+                     log("[OK] Already up to date.", GREEN);
+                 }
+             }
+             
+             fs::current_path(ghPath); // go back to GitHub dir
              sourceReady = true;
         } else {
              // Clone

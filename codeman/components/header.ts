@@ -90,7 +90,7 @@ C8888     d888 888b d888 888 d88 88b     e Y8b Y8b   "8" 888 888 88b
     return coloredArt;
 }
 
-export async function printCodemanHeader(mode: ProjectMode = 'standard') {
+export async function printCodemanHeader(mode: ProjectMode = 'unknown') {
     // Clear screen
     console.clear();
     process.stdout.write('\x1b[2J\x1b[3J\x1b[H');

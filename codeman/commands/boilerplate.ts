@@ -2,6 +2,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { createSpinner } from '../components/spinner';
+import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { createComponent } from './create-component';

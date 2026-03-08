@@ -98,6 +98,12 @@ async function getProjectOptions(s: GlobalState): Promise<MenuOption[]> {
     });
 
     options.push({
+        label: '🚀 Cloud Jobs (API)',
+        value: 'cloud-jobs',
+        action: { type: 'navigate', target: 'jobs' }
+    });
+
+    options.push({
         label: '⚙️  Config',
         value: 'config',
         action: { type: 'navigate', target: 'config' }

@@ -1,5 +1,5 @@
-import { MenuDefinition, MenuOption } from '../core/types';
-import { GlobalState } from '../core/state';
+import { MenuDefinition, MenuOption } from '../../schemas/menu-schema';
+import { GlobalState } from '../../core/state';
 
 export const getDevDojoOptions = async (state: GlobalState): Promise<MenuOption[]> => {
     const projectType = state.project.type;

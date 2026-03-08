@@ -278,18 +278,56 @@ export class ReleaseManager {
         }
     }
 
-    static async deployAll(projectRoot: string): Promise<void> {
-        console.log(chalk.cyan('\n🌐 Deploying Web & Functions to Firebase...'));
+    static async deployRules(projectRoot: string): Promise<void> {
+        console.log(chalk.cyan('\n🔒 Deploying Firebase Security Rules & Indexes...'));
         if (!await ProcessUtils.checkCommand('firebase')) {
             console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
             return;
         }
         try {
-            await this.execPromise('firebase deploy --only hosting,functions', projectRoot);
-            console.log(chalk.green('✅ Web & Functions deployed to Firebase.'));
+            const { ProcessManager } = await import('../core/process-manager');
+            await ProcessManager.spawnElevatedDetachedWindow('Deploy Firebase Rules', 'firebase deploy --only firestore:rules,firestore:indexes,storage,database', projectRoot);
+            console.log(chalk.green('✅ Deployment started in elevated window.'));
         } catch (e: any) {
             console.log(chalk.red(`Deploy failed: ${e.message}`));
         }
+    }
+
+    static async deployFunctionsAPI(projectRoot: string): Promise<void> {
+        console.log(chalk.cyan('\n☁️  Deploying Cloud Functions to Firebase...'));
+        console.log(chalk.gray('  (Dashboard is deployed automatically by Vercel on git push)'));
+        if (!await ProcessUtils.checkCommand('firebase')) {
+            console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+            return;
+        }
+        try {
+            const { ProcessManager } = await import('../core/process-manager');
+            await ProcessManager.spawnElevatedDetachedWindow('Deploy Cloud Functions', 'firebase deploy --only functions', projectRoot);
+            console.log(chalk.green('✅ Deployment started in elevated window.'));
+        } catch (e: any) {
+            console.log(chalk.red(`Deploy failed: ${e.message}`));
+        }
+    }
+
+    static async deployAllFirebase(projectRoot: string): Promise<void> {
+        console.log(chalk.cyan('\n🌟 Deploying Everything to Firebase (excl. hosting)...'));
+        console.log(chalk.gray('  (Dashboard is deployed automatically by Vercel on git push)'));
+        if (!await ProcessUtils.checkCommand('firebase')) {
+            console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+            return;
+        }
+        try {
+            const { ProcessManager } = await import('../core/process-manager');
+            await ProcessManager.spawnElevatedDetachedWindow('Deploy All Firebase', 'firebase deploy --only functions,firestore,storage', projectRoot);
+            console.log(chalk.green('✅ Deployment started in elevated window.'));
+        } catch (e: any) {
+            console.log(chalk.red(`Deploy failed: ${e.message}`));
+        }
+    }
+
+    static async deployAll(projectRoot: string): Promise<void> {
+        // Keeping original method as alias for FunctionsAPI
+        await this.deployFunctionsAPI(projectRoot);
     }
 
     private static execPromise(cmd: string, cwd: string): Promise<string> {

@@ -38,7 +38,7 @@ export const FirebaseManagerMenu: MenuNode = {
             { name: '👤 Manage Accounts (Login/Logout)', value: 'manage-accounts' },
             { name: '🔗 Link Current Directory as Project', value: 'link-project' },
             { name: '🔍 Check Status (firebase use)', value: 'context' },
-            new inquirer.Separator(),
+            new inquirer.Separator() as any,
             { name: '🔥 Deploy Firestore Rules', value: 'deploy-firestore' },
             { name: '💾 Deploy Storage Rules', value: 'deploy-storage' },
             { name: '🗄️  Deploy RTDB Rules', value: 'deploy-rtdb' },

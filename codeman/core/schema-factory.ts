@@ -76,7 +76,7 @@ export function createSchemaMenu(def: MenuDefinition): MenuNode {
                 if (!choiceValue) return choiceValue;
 
                 // 5. Handle Disabled Select
-                if (choiceValue.endsWith('__DISABLED')) {
+                if (typeof choiceValue === 'string' && choiceValue.endsWith('__DISABLED')) {
                     continue; // Re-render
                 }
 

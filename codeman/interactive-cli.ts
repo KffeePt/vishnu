@@ -168,12 +168,17 @@ GEMINI_API_KEY=${geminiKey}
     fs.writeFileSync(envPath, envContent);
     console.log(chalk.green('✅ .env file generated successfully.'));
 
-    // Run firebase init
-    console.log(chalk.blue('\n🔥 Running Firebase Init...'));
-    await new Promise<void>((resolve) => {
-      const child = spawn('firebase', ['init'], { stdio: 'inherit', shell: true });
-      child.on('close', () => resolve());
-    });
+    // Run firebase init ONLY if firebase.json doesn't exist yet
+    const firebaseJsonPath = path.join(process.cwd(), 'firebase.json');
+    if (!fs.existsSync(firebaseJsonPath)) {
+      console.log(chalk.blue('\n🔥 Running Firebase Init...'));
+      await new Promise<void>((resolve) => {
+        const child = spawn('firebase', ['init'], { stdio: 'inherit', shell: true });
+        child.on('close', () => resolve());
+      });
+    } else {
+      console.log(chalk.green('✅ Firebase already initialized (firebase.json found). Skipping firebase init.'));
+    }
 
     // Reload dotenv
     const dotenv = await import('dotenv');
@@ -211,7 +216,101 @@ GEMINI_API_KEY=${geminiKey}
 
 
 
+async function handleCLIArgs(): Promise<boolean> {
+  const { program } = await import('commander');
+  const args = process.argv.slice(2);
+  
+  // Only parse if we have flags/commands, otherwise skip to interactive TUI
+  if (args.length === 0 || (!args[0].startsWith('-') && args[0] !== 'run')) {
+      return false; 
+  }
+
+  program
+    .name('codeman')
+    .description('CodeMan CLI — Vishnu Preserver System')
+    .version('1.0.0');
+
+  program
+    .option('--run-tests', 'Run the project test suite')
+    .option('--run-build', 'Run a debug build')
+    .option('--run-deploy', 'Deploy the project')
+    .option('--run-e2e', 'Run Playwright E2E tests')
+    .option('--emulator', 'Start Firebase emulators');
+
+  // Legacy command support "codeman run flutter test"
+  program
+    .command('run <platform> <action>')
+    .description('Run specific platform commands (e.g. run flutter test)')
+    .action(async (platform, action) => {
+        if (platform === 'flutter' && action === 'test') {
+            console.log(chalk.cyan('🚀 Starting Comprehensive Test Suite via CLI...'));
+            const { BuildManager } = await import('./managers/build-manager');
+            await BuildManager.runTests(process.cwd());
+            process.exit(0);
+        }
+    });
+
+  // Note: Commander by default handles --help and -h automatically, 
+  // printing the generated usage and exiting.
+
+  // Parse the arguments
+  program.parse(process.argv);
+  const options = program.opts();
+
+  // If we get here and there are options invoked (we didn't exit on --help)
+  if (Object.keys(options).length > 0) {
+      if (options.runTests) {
+          const { BuildManager } = await import('./managers/build-manager');
+          await BuildManager.runTests(process.cwd());
+          process.exit(0);
+      }
+      if (options.runBuild) {
+          const { BuildManager } = await import('./managers/build-manager');
+          await BuildManager.buildAll(process.cwd(), 'debug');
+          process.exit(0);
+      }
+      if (options.runDeploy) {
+          const { ReleaseManager } = await import('./managers/release-manager');
+          await ReleaseManager.deployAll(process.cwd());
+          process.exit(0);
+      }
+      if (options.runE2e) {
+          const { spawn } = await import('child_process');
+          const p = await import('path');
+          const dashDir = p.join(process.cwd(), 'dashboard');
+          await new Promise<void>(resolve => {
+              const child = spawn('npx', ['playwright', 'test'], {
+                  stdio: 'inherit', shell: true, cwd: dashDir
+              });
+              child.on('close', () => resolve());
+          });
+          process.exit(0);
+      }
+      if (options.emulator) {
+          const { spawn } = await import('child_process');
+          await new Promise<void>(resolve => {
+              const child = spawn('firebase', ['emulators:start'], {
+                  stdio: 'inherit', shell: true, cwd: process.cwd()
+              });
+              child.on('close', () => resolve());
+          });
+          process.exit(0);
+      }
+  }
+
+  // If no specific options were matched that exit, but an unknown flag was passed:
+  if (program.args.length > 0 && program.args[0].startsWith('-')) {
+     console.error(`Unknown option. Use \`codeman --help\` for usage info.`);
+     process.exit(1);
+  }
+
+  return false;
+}
+
 async function bootstrap() {
+  const handled = await handleCLIArgs();
+  if (handled) return;
+
   // Clear terminal completely (screen + scrollback) for a clean restart experience
   process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
 
@@ -255,14 +354,7 @@ async function bootstrap() {
       ProcessRegistryManager.register('codeman', process.pid, targetPath);
 
       // --- CLI Command Interception ---
-      // handle "codeman run flutter test"
-      const args = process.argv.slice(2);
-      if (args.length >= 3 && args[0] === 'run' && args[1] === 'flutter' && args[2] === 'test') {
-        console.log(chalk.cyan('🚀 Starting Comprehensive Test Suite via CLI...'));
-        const { BuildManager } = await import('./managers/build-manager');
-        await BuildManager.runTests(targetPath);
-        process.exit(0);
-      }
+      // (Moved to Commander routing above)
 
     } catch (e) {
       console.error(chalk.red(`Failed to change directoryOr run command: ${e}`));
@@ -325,9 +417,8 @@ async function bootstrap() {
   let startNode = 'ROOT';
 
   if (state.cloudFeaturesEnabled) {
-    // Only go to AUTH if we strictly need it, but user requested deferral.
-    // We now start at ROOT and let specific actions trigger Auth.
-    startNode = 'ROOT';
+    // We start at AUTH out of the gate for all cloud projects (NextJS, Flutter, etc.)
+    startNode = 'AUTH';
   } else {
     startNode = 'ROOT';
   }
@@ -348,21 +439,70 @@ process.on('exit', () => {
   } catch (e) { }
 });
 
-process.on('uncaughtException', (err) => {
+process.on('uncaughtException', async (err) => {
+  console.clear();
   console.error(chalk.bgRed.white(' UNCAUGHT EXCEPTION '));
   console.error(chalk.red(err.message));
   if (err.stack) console.error(chalk.gray(err.stack));
-  process.exit(1);
+  
+  try {
+    const clipboardy = (await import('clipboardy')).default;
+    clipboardy.writeSync(err.stack || err.message);
+    console.log(chalk.cyan('\n📋 Error copied to clipboard.'));
+  } catch (e) {
+    console.log(chalk.yellow('\n⚠️ Could not copy to clipboard.'));
+  }
+  
+  console.log(chalk.white('Press any key to exit...'));
+  
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', () => process.exit(1));
+  } else {
+    process.exit(1);
+  }
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', async (reason, promise) => {
+  console.clear();
   console.error(chalk.bgRed.white(' UNHANDLED REJECTION '));
   console.error(chalk.red(String(reason)));
-  process.exit(1);
+  
+  try {
+    const clipboardy = (await import('clipboardy')).default;
+    clipboardy.writeSync(String(reason));
+    console.log(chalk.cyan('\n📋 Error copied to clipboard.'));
+  } catch (e) {
+    console.log(chalk.yellow('\n⚠️ Could not copy to clipboard.'));
+  }
+  
+  console.log(chalk.white('Press any key to exit...'));
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', () => process.exit(1));
+  } else {
+    process.exit(1);
+  }
 });
 
-bootstrap().catch(err => {
+bootstrap().catch(async (err) => {
+  console.clear();
   console.error(chalk.bgRed.white(' FATAL CLI ERROR '));
   console.error(chalk.red(err));
-  process.exit(1);
+  
+  try {
+    const clipboardy = (await import('clipboardy')).default;
+    clipboardy.writeSync(String(err));
+  } catch (e) {}
+  
+  console.log(chalk.white('\nPress any key to exit...'));
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', () => process.exit(1));
+  } else {
+    process.exit(1);
+  }
 });

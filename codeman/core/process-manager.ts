@@ -21,6 +21,27 @@ export class ProcessManager {
     }
 
     /**
+     * Spawns a command in an ELEVATED (Administrator) detached terminal window.
+     * Triggers a Windows UAC prompt. Useful for commands requiring symlinks or deep system changes.
+     */
+    static async spawnElevatedDetachedWindow(title: string, command: string, cwd: string = process.cwd()) {
+        // We use PowerShell's Start-Process with -Verb RunAs to request elevation.
+        // The argument list for cmd.exe needs to set the title, change directory, and run the command.
+        // We add an echo/pause to let the user see the result before the window closes.
+        const cmdArgs = `'/c', 'TITLE "${title}" ^& cd /d "${cwd}" ^& echo Executing elevated command... ^& ${command} ^& echo. ^& echo Process complete. ^& pause'`;
+        
+        const psCommand = `Start-Process cmd -ArgumentList ${cmdArgs} -Verb RunAs`;
+        
+        const child = spawn('powershell.exe', ['-Command', psCommand], {
+            cwd,
+            shell: true,
+            stdio: 'ignore',
+            detached: true
+        });
+        child.unref();
+    }
+
+    /**
      * Kills processes by window title using taskkill.
      * Handles exact matches and prefix matches.
      */

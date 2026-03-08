@@ -106,7 +106,7 @@ export const LinkProjectMenu: MenuNode = {
         console.log(chalk.green('✅ Updated .env'));
 
         // Next.js Scaffolding
-        if (state.projectType === 'nextjs' || (await fs.pathExists('next.config.js')) || (await fs.pathExists('next.config.mjs'))) {
+        if (state.project.type === 'nextjs' || (await fs.pathExists('next.config.js')) || (await fs.pathExists('next.config.mjs'))) {
             console.log(chalk.cyan('\n🏗️  Scaffolding Next.js Auth Components...'));
             await scaffoldNextJsAuth(clientContent);
         }

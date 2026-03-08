@@ -16,26 +16,42 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Caim setting code
+claims/
+
 # VS Code
 .vscode/
+# Firebase
+.firebase/
+.vercel/
 
 # Build
 dist/
 coverage/
 
-# Vishnu Specific
-.codeman.lock
-.shiva.lock
-logs/
+# Archived Tasks
 docs/archived_tasks/
-tests/results/
 
 
 # Codeman Specific
+.artifacts/
 .codeman-registry.json
 .codeman.lock
 .shiva.lock
 **/_shiva_runner.bat
 
-# Installer output (distributed via GitHub Releases)
+# Installer output
 setup/output/
+
+# Text files
+*.txt
+
+# Log files
+*.log
+logs/
+
+# Test results
+tests/results/
+# Secure Vishnu Credentials
+.vishnu/
+dashboard/.env

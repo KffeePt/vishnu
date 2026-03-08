@@ -4,6 +4,7 @@ import { MenuNode } from '../core/types';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { z } from 'zod';
 // import { spawn } from 'child_process';
 
 export class CppStrategy implements ProjectStrategy {
@@ -22,6 +23,7 @@ export class CppStrategy implements ProjectStrategy {
     async getTestRunnerMenu(): Promise<MenuNode> {
         return {
             id: 'cpp-tests',
+            propsSchema: z.any(),
             render: async () => {
                 console.log(chalk.yellow('C++ test runner not yet implemented.'));
                 await new Promise(r => setTimeout(r, 1000));

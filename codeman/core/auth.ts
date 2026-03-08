@@ -21,6 +21,7 @@ const openBrowser = async (url: string) => {
 export class AuthService {
     private static server: http.Server | null = null;
     private static PORT = 3005;
+    private static currentNonce: string | null = null;
 
     private static async killPort(port: number) {
         return new Promise<void>((resolve) => {
@@ -55,6 +56,9 @@ export class AuthService {
         const { createRequire } = await import('module');
         const require = createRequire(import.meta.url);
         require('dotenv').config({ override: true });
+
+        const crypto = await import('crypto');
+        this.currentNonce = crypto.randomBytes(32).toString('hex');
 
         console.log('\n🔐 Awaiting Auth from Firebase...');
 
@@ -125,100 +129,109 @@ export class AuthService {
             this.server = http.createServer(async (req, res) => {
                 const parsedUrl = url.parse(req.url || '', true);
 
-                if (parsedUrl.pathname === '/callback') {
-                    const idToken = parsedUrl.query.token as string;
-
-                    if (idToken) {
+                if (parsedUrl.pathname === '/callback' && req.method === 'POST') {
+                    let body = '';
+                    req.on('data', chunk => body += chunk);
+                    req.on('end', async () => {
                         try {
-                            const decodedToken = await admin.auth().verifyIdToken(idToken);
+                            const { token: idToken, nonce } = JSON.parse(body);
 
-                            // Check custom claims
-                            console.log('🔎 User Claims:', JSON.stringify(decodedToken, null, 2));
-                            const email = decodedToken.email;
-
-                            // STRICT CHECK: Must have 'owner' claim or role, OR match the defined OWNER_EMAIL
-                            const ownerEmail = process.env.OWNER_EMAIL;
-                            const isOwner = decodedToken.owner === true || (ownerEmail && email === ownerEmail);
-
-                            // Auto-Owner mechanism removed. Strict verification only.
-
-                            if (isOwner) {
-                                state.setUser({
-                                    email: email || 'unknown',
-                                    uid: decodedToken.uid,
-                                    isAdmin: true
-                                });
-
-                                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                                res.end(`
-                                    <html>
-                                    <body style="background:#111; color:#eee; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh;">
-                                        <div style="background:#222; padding:40px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.5); text-align:center;">
-                                            <h1 style="color:#4caf50;">✅ Login Successful</h1>
-                                            <p style="color:#888;">CodeMan Authentication</p>
-                                            <p>Welcome, <strong>${email}</strong></p>
-                                            <p style="color:#888;">You may close this tab and return to the CLI.</p>
-                                        </div>
-                                    </body>
-                                    </html>
-                                `);
-
-                                console.log(`✅ Welcome, ${email}`);
-                                // Save Auth Timestamp
-                                UserConfigManager.setLastAuth(Date.now());
-
+                            if (!nonce || nonce !== this.currentNonce) {
+                                res.writeHead(403, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({ error: 'CSRF token mismatch or expired' }));
                                 this.closeServer();
-                                resolve(true);
-                            } else {
-                                console.log(chalk.red('\n🚫 ACCESS DENIED'));
-                                console.log(chalk.gray('------------------------------------------------'));
-                                console.log(chalk.white(`User: ${chalk.bold(email)}`));
-                                console.log(chalk.yellow(`Status: Not an Owner`));
-                                console.log(chalk.gray('------------------------------------------------'));
-                                console.log(chalk.cyan(`To fix this, add ${email} to OWNER_EMAIL in .env\n`));
+                                resolve(false);
+                                return;
+                            }
 
-                                res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' });
+                            if (idToken) {
+                                try {
+                                    const decodedToken = await admin.auth().verifyIdToken(idToken);
 
-                                const html = `
-                                    <html>
-                                    <head>
-                                        <title>Access Denied - CodeMan</title>
-                                        <style>
-                                            body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-                                            .card { background: #1e293b; padding: 40px; border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); text-align: center; border: 1px solid #334155; max-width: 400px; }
-                                            h1 { color: #ef4444; margin-top: 0; font-size: 24px; }
-                                            p { color: #94a3b8; line-height: 1.5; }
-                                            .email { background: #334155; padding: 4px 12px; border-radius: 4px; color: #e2e8f0; font-family: monospace; }
-                                        </style>
-                                    </head>
-                                    <body>
-                                        <script>
-                                            // CLEAR SESSION COOKIE ON DENIAL
-                                            document.cookie = "codeman_session=; max-age=0; path=/; SameSite=Strict";
-                                        </script>
-                                        <div class="card">
-                                            <h1>⛔ Access Denied</h1>
-                                            <p>The account <span class="email">${email}</span> is not authorized.</p>
-                                            <p>Please contact the project owner or check your <code>.env</code> configuration.</p>
-                                        </div>
-                                    </body>
-                                    </html>
-                                `;
-                                res.end(html);
+                                // Check custom claims
+                                console.log('🔎 User Claims:', JSON.stringify(decodedToken, null, 2));
+                                const email = decodedToken.email;
+
+                                // STRICT CHECK: Must have 'owner' claim or role, OR match the defined OWNER_EMAIL
+                                const ownerEmail = process.env.OWNER_EMAIL;
+                                const isOwner = decodedToken.owner === true || (ownerEmail && email === ownerEmail);
+
+                                let userRole = isOwner ? 'admin' : (decodedToken.role || null);
+
+                                // Call verifyAccess Cloud Function to get latest truth
+                                try {
+                                    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+                                    const functionsBaseUrl = `https://us-central1-${projectId}.cloudfunctions.net`;
+                                    const cfResp = await fetch(`${functionsBaseUrl}/verifyAccess`, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Authorization': `Bearer ${idToken}`,
+                                            'Content-Type': 'application/json'
+                                        },
+                                        body: JSON.stringify({ data: {} }) // Callable CF format
+                                    });
+                                    if (cfResp.ok) {
+                                        const cfData = await cfResp.json() as any;
+                                        if (cfData.result && cfData.result.role) {
+                                            userRole = cfData.result.role;
+                                        }
+                                    } else {
+                                        console.log(chalk.yellow(`[Auth] verifyAccess CF returned ${cfResp.status}`));
+                                    }
+                                } catch (err) {
+                                    console.log(chalk.yellow(`[Auth] Failed to call verifyAccess CF: ${(err as Error).message}`));
+                                }
+
+                                if (userRole) {
+                                    state.setUser({
+                                        email: email || 'unknown',
+                                        uid: decodedToken.uid,
+                                        isAdmin: userRole === 'admin' || userRole === 'owner',
+                                        role: userRole as any
+                                    });
+
+                                    res.writeHead(200, {
+                                        'Content-Type': 'application/json',
+                                        'Set-Cookie': 'codeman_session=active; max-age=3600; path=/; SameSite=Strict; HttpOnly'
+                                    });
+                                    res.end(JSON.stringify({ success: true, email }));
+
+                                    console.log(`✅ Welcome, ${email}`);
+                                    // Save Auth Timestamp
+                                    UserConfigManager.setLastAuth(Date.now());
+
+                                    this.closeServer();
+                                    resolve(true);
+                                } else {
+                                    console.log(chalk.red('\n🚫 ACCESS DENIED'));
+                                    console.log(chalk.gray('------------------------------------------------'));
+                                    console.log(chalk.white(`User: ${chalk.bold(email)}`));
+                                    console.log(chalk.yellow(`Status: Not Authorized (No Role Assigned)`));
+                                    console.log(chalk.gray('------------------------------------------------'));
+                                    console.log(chalk.cyan(`To fix this, assign a role to this user or add ${email} to OWNER_EMAIL in .env\n`));
+
+                                    res.writeHead(403, { 'Content-Type': 'application/json' });
+                                    res.end(JSON.stringify({ error: 'Unauthorized Role', email }));
+                                    this.closeServer();
+                                    resolve(false);
+                                }
+
+                            } catch (error) {
+                                console.error('Error verifying token:', error);
+                                res.writeHead(500, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({ error: 'Authentication failed' }));
                                 this.closeServer();
                                 resolve(false);
                             }
-
+                            } // Close if (idToken) {}
                         } catch (error) {
-                            console.error('Error verifying token:', error);
-                            res.writeHead(500);
-                            res.end('Authentication failed.');
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'Invalid request body' }));
                             this.closeServer();
                             resolve(false);
                         }
-                    } else {
-                        // serve client side code to do the login
-                    }
+                    });
+                    return;
                 }
 
                 // Serve the Login Page
@@ -241,8 +254,33 @@ export class AuthService {
                                 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
                                 
                                 const firebaseConfig = ${JSON.stringify(clientEnv)};
+                                const nonce = "${this.currentNonce}";
                                 const app = initializeApp(firebaseConfig);
                                 const auth = getAuth(app);
+
+                                const verifyWithServer = async (token) => {
+                                    const res = await fetch('/callback', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ token, nonce })
+                                    });
+                                    const data = await res.json();
+                                    
+                                    if (res.ok && data.success) {
+                                        document.cookie = "codeman_session=active; max-age=3600; path=/; SameSite=Strict; Secure";
+                                        document.body.innerHTML = \`
+                                            <div class="card" style="text-align:center;">
+                                                <h1 style="color:#4caf50;">✅ Login Successful</h1>
+                                                <p style="color:#888;">CodeMan Authentication</p>
+                                                <p>Welcome, <strong>\${data.email}</strong></p>
+                                                <p style="color:#888;">You may close this tab and return to the CLI.</p>
+                                            </div>
+                                        \`;
+                                    } else {
+                                        document.cookie = "codeman_session=; max-age=0; path=/; SameSite=Strict; Secure";
+                                        throw new Error(data.error || 'Authentication denied by server.');
+                                    }
+                                };
 
                                 onAuthStateChanged(auth, async (user) => {
                                     if (user && document.cookie.includes('codeman_session=active')) {
@@ -254,15 +292,14 @@ export class AuthService {
                                         
                                         try {
                                             const token = await user.getIdToken();
-                                            // Refresh session cookie (1 hour)
-                                            document.cookie = "codeman_session=active; max-age=3600; path=/; SameSite=Strict";
-                                            window.location.href = '/callback?token=' + token;
+                                            await verifyWithServer(token);
                                         } catch (e) {
                                             console.error("Auto-login failed:", e);
                                             if (btn) {
                                                 btn.innerText = 'Sign in with Google';
                                                 btn.disabled = false;
                                             }
+                                            document.getElementById('error').innerText = e.message;
                                         }
                                     }
                                 });
@@ -273,20 +310,109 @@ export class AuthService {
                                     btn.disabled = true;
                                     
                                     const provider = new GoogleAuthProvider();
-                                    // FORCE ACCOUNT SELECTION
                                     provider.setCustomParameters({ prompt: 'select_account' });
 
                                     try {
                                         const result = await signInWithPopup(auth, provider);
                                         const token = await result.user.getIdToken();
-                                        // Set 1-hour session cookie
-                                        document.cookie = "codeman_session=active; max-age=3600; path=/; SameSite=Strict";
-                                        window.location.href = '/callback?token=' + token;
+                                        await verifyWithServer(token);
                                     } catch (error) {
                                         console.error(error);
-                                        btn.innerText = 'Try Again';
+                                        btn.innerText = 'Sign in with Google';
                                         btn.disabled = false;
                                         document.getElementById('error').innerText = error.message;
+                                    }
+                                };
+                            </script>
+                            <script type="module">
+                                import { startRegistration, startAuthentication } from 'https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.js';
+                                import { getAuth, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+
+                                const functionsBaseUrl = \`https://us-central1-\${firebaseConfig.projectId}.cloudfunctions.net\`;
+
+                                window.registerPasskey = async () => {
+                                    const btn = document.getElementById('btn-register');
+                                    btn.innerText = 'Registering...';
+                                    btn.disabled = true;
+                                    const auth = getAuth();
+                                    try {
+                                        const token = await auth.currentUser.getIdToken();
+                                        
+                                        // 1. Get options from server
+                                        const resp1 = await fetch(\`\${functionsBaseUrl}/generateRegistration\`, {
+                                            method: 'POST',
+                                            headers: { 'Authorization': \`Bearer \${token}\`, 'Content-Type': 'application/json' }
+                                        });
+                                        if (!resp1.ok) throw new Error(await resp1.text());
+                                        const options = await resp1.json();
+
+                                        // 2. Client signs challenge
+                                        const attResp = await startRegistration(options);
+
+                                        // 3. Send signature to server
+                                        const resp2 = await fetch(\`\${functionsBaseUrl}/verifyRegistration\`, {
+                                            method: 'POST',
+                                            headers: { 'Authorization': \`Bearer \${token}\`, 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(attResp)
+                                        });
+                                        if (!resp2.ok) throw new Error(await resp2.text());
+                                        
+                                        btn.innerText = 'Passkey Registered!';
+                                        btn.style.background = '#10b981';
+                                    } catch (e) {
+                                        console.error(e);
+                                        document.getElementById('error').innerText = e.message;
+                                        btn.innerText = 'Register Passkey';
+                                        btn.disabled = false;
+                                    }
+                                };
+
+                                window.loginWithPasskey = async () => {
+                                    const btn = document.getElementById('btn-passkey');
+                                    btn.innerText = 'Verifying...';
+                                    btn.disabled = true;
+                                    const auth = getAuth();
+                                    
+                                    // Get email for non-discoverable flow (simplified for CLI developer use case)
+                                    const email = prompt("Enter your email address for this passkey:");
+                                    if (!email) {
+                                        btn.innerText = 'Sign in with Passkey';
+                                        btn.disabled = false;
+                                        return;
+                                    }
+
+                                    try {
+                                        const resp1 = await fetch(\`\${functionsBaseUrl}/generateAuthentication\`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ email })
+                                        });
+                                        if (!resp1.ok) throw new Error(await resp1.text());
+                                        const options = await resp1.json();
+
+                                        const asseResp = await startAuthentication(options);
+
+                                        const resp2 = await fetch(\`\${functionsBaseUrl}/verifyAuthentication\`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ ...asseResp, email })
+                                        });
+                                        if (!resp2.ok) throw new Error(await resp2.text());
+                                        
+                                        const { customToken } = await resp2.json();
+                                        
+                                        // Sign into Firebase Auth
+                                        const userCredential = await signInWithCustomToken(auth, customToken);
+                                        const token = await userCredential.user.getIdToken();
+                                        
+                                        // Verify with CLI server to complete the flow and close the tab
+                                        await window.verifyWithServer(token);
+                                        
+                                    } catch (e) {
+                                        console.error(e);
+                                        document.getElementById('error').innerText = e.message;
+                                        btn.innerText = 'Sign in with Passkey';
+                                        btn.disabled = false;
                                     }
                                 };
                             </script>
@@ -348,8 +474,8 @@ export class AuthService {
                                     gap: 0.5rem;
                                 }
                                 button:hover {
-                                    background: #2563eb;
                                     transform: translateY(-1px);
+                                    filter: brightness(1.1);
                                 }
                                 button:disabled {
                                     opacity: 0.7;
@@ -373,12 +499,21 @@ export class AuthService {
                                 <p style="color: #94a3b8; margin-bottom: 2rem;">
                                     Please authenticate to access the CLI development tools and admin features.
                                 </p>
-                                <button id="btn" onclick="login()">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81z"/>
-                                    </svg>
-                                    Sign in with Google
-                                </button>
+                                <div style="display: flex; flex-direction: column; gap: 1rem;">
+                                    <button id="btn" onclick="login()">
+                                        Sign in with Google
+                                    </button>
+                                    <button id="btn-passkey" onclick="loginWithPasskey()" style="background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.2);">
+                                        Sign in with Passkey
+                                    </button>
+                                    
+                                    <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid rgba(255,255,255,0.1);">
+                                        <button id="btn-register" onclick="registerPasskey()" style="background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.85rem;">
+                                            Register a new Passkey
+                                        </button>
+                                        <p style="font-size: 0.75rem; color: #64748b; margin-top: 0.5rem;">(Must be signed in with Google first)</p>
+                                    </div>
+                                </div>
                                 <div id="error" class="error"></div>
                             </div>
                         </body>

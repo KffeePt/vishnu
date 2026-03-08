@@ -1,0 +1,116 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Role checks based on custom claims
+    function isClient() {
+      return isAuthenticated() && request.auth.token.client == true;
+    }
+
+    function isOwner() {
+      return isAuthenticated() && request.auth.token.role == 'owner';
+    }
+
+    function isStaff() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'owner' || 
+        request.auth.token.role == 'projectManager' || 
+        request.auth.token.role == 'senior' || 
+        request.auth.token.role == 'dev'
+      );
+    }
+
+    // Projects collection
+    match /projects/{projectId} {
+      allow read: if isAuthenticated(); // Or restrict to members in the future
+      allow create, update, delete: if isOwner();
+      
+      // Jobs subcollection
+      match /jobs/{jobId} {
+        allow read: if isAuthenticated();
+        // Only staff can initiate a job. Changes/updates mostly done by admin SDK/server
+        allow create: if isStaff();
+        allow update, delete: if isOwner();
+      }
+    }
+
+    // Global users registry (optional, managed via admin SDK typically)
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isOwner();
+    }
+
+    // Passkeys registry for WebAuthn
+    match /passkeys/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Temporary auth challenges for discoverable credentials
+    match /authChallenges/{challengeId} {
+      allow create: if true;
+      allow read, update, delete: if false; 
+    }
+
+    // --- Dashboard Specific Collections ---
+    
+    match /access_registry/{docId} {
+      // Only admins and maintainers can read/write the central access mapping rules
+      allow read, write: if isAuthenticated() && (request.auth.token.role == 'admin' || request.auth.token.role == 'maintainer');
+    }
+
+    match /activity_log/{logId} {
+      // All authenticated staff can read activity; only admins/maintainers can write/clean logs
+      allow read: if isAuthenticated() && (request.auth.token.role == 'admin' || request.auth.token.role == 'maintainer' || request.auth.token.role == 'staff');
+      allow create: if isAuthenticated(); // Maybe anyone can log an action
+      allow update, delete: if isAuthenticated() && (request.auth.token.role == 'admin' || request.auth.token.role == 'maintainer');
+    }
+
+    match /repo_config/{docId} {
+      // Holds project-wide configurations (like branching rules defined from dashboard)
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (request.auth.token.role == 'admin' || request.auth.token.role == 'maintainer');
+    }
+
+    // --- Portal Specific Collections ---
+    
+    // Clients read/write ONLY their own data (clientId == auth.uid)
+    match /clients/{clientId} {
+      allow read, write: if isClient() && request.auth.uid == clientId;
+      allow read, write: if isStaff();
+    }
+    match /client_projects/{projectId} {
+      allow read, write: if isClient() && resource.data.clientId == request.auth.uid;
+      allow read, write: if isStaff();
+    }
+    // Packages catalog is public-read
+    match /packages/{packageId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+    // Subscriptions, payments — client reads own, staff reads all
+    match /subscriptions/{subId} {
+      allow read: if isClient() && resource.data.clientId == request.auth.uid;
+      allow read, write: if isStaff();
+    }
+    match /payments/{paymentId} {
+      allow read: if isClient() && resource.data.clientId == request.auth.uid;
+      allow read, write: if isStaff();
+    }
+    // Support conversations — client accesses own threads, staff accesses assigned threads
+    match /support_threads/{threadId} {
+      allow read, write: if isClient() && resource.data.clientId == request.auth.uid;
+      allow read, write: if isStaff();
+      
+      match /messages/{msgId} {
+        allow read, write: if isClient() && get(/databases/$(database)/documents/support_threads/$(threadId)).data.clientId == request.auth.uid;
+        allow read, write: if isStaff();
+      }
+    }
+  }
+}

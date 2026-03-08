@@ -62,6 +62,38 @@ async function baseCreateProject(type: 'nextjs' | 'flutter' | 'python' | 'cpp') 
 
         console.log(chalk.green.bold('\n✅ Project Created Successfully!'));
 
+        // 3.5 Offer Packages
+        let strategy: any = null;
+        if (type === 'nextjs') {
+            const { NextJsStrategy } = await import('../modes/nextjs');
+            strategy = new NextJsStrategy();
+        } else if (type === 'flutter') {
+            const { FlutterStrategy } = await import('../modes/flutter');
+            strategy = new FlutterStrategy();
+        }
+
+        if (strategy?.getPackageOptions) {
+            const packages = await strategy.getPackageOptions();
+            if (packages.length > 0) {
+                const { selectedPackages } = await inquirer.prompt([{
+                    type: 'checkbox',
+                    name: 'selectedPackages',
+                    message: 'Select optional SaaS modules to include:',
+                    choices: packages.map((p: any) => ({
+                        name: `${p.name} - ${p.description}`,
+                        short: p.name,
+                        value: p
+                    }))
+                }]);
+
+                for (const pkg of selectedPackages) {
+                    console.log(chalk.blue(`Scaffolding module: ${pkg.name}...`));
+                    if (type === 'nextjs') await pkg.scaffoldNextJs(projectPath);
+                    else if (type === 'flutter') await pkg.scaffoldFlutter(projectPath);
+                }
+            }
+        }
+
         // 4. Offer to Open
         const { openNow } = await inquirer.prompt([{
             type: 'confirm',
@@ -77,7 +109,7 @@ async function baseCreateProject(type: 'nextjs' | 'flutter' | 'python' | 'cpp') 
 
             // Register as last active
             const manager = new GlobalStateManager();
-            manager.setLastActive(projectPath, projectName);
+            manager.setLastActive(projectPath);
 
             // Trigger Auth Setup Automatically
             const { checkAndSetupAuth } = await import('../core/auth-helper');

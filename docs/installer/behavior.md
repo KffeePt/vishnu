@@ -18,11 +18,12 @@ The **Vishnu Installer** (`setup.exe` / `vishnu-installer.exe`) is a robust C++ 
     - **Github Auth:** Copies the public key to clipboard and pauses, instructing the user to add it to GitHub Settings. This is a critical manual handshake.
     - **Host Scanning:** Runs `ssh-keyscan github.com` to prevent "Are you sure?" prompts during git operations.
 
-## 3. System Installation / Update
+## 3. System Installation / Update (Self-Updating)
 
 - **Target:** `~/Documents/GitHub/vishnu`.
+- **Version Checking:** Before pulling, the installer fetches the remote `version.json` from the repository and compares it strictly against the local `version.json`. If a newer version is deployed, the user is prompted to auto-update.
 - **Clone vs Update:**
-    - If folder exists: Runs `git pull origin main`.
+    - If folder exists: Runs `git pull origin main` (after version prompt).
     - If missing: Runs `git clone ...`.
 - **Linkage:**
     - Runs `npm install` inside the directory.

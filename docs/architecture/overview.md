@@ -31,8 +31,9 @@ The autonomous agent.
 Vishnu enforces a **Global Workflow** where:
 1.  All projects live in `~/Documents/GitHub`.
 2.  Every project has a standard `.env` structure (managed by Vishnu).
-3.  Authentication is centralized (Firebase Auth).
-4.  Documentation is self-organizing (Shiva).
+3.  Authentication is centralized via **Firebase Auth**, employing secure POST body tokens, CSRF nonces, and strictly-typed HTTP-only cookies.
+4.  Data and state management lean on **Firestore** as the primary backend for both the Vishnu CLI and all generated client apps (Flutter/Next.js).
+5.  Documentation is self-organizing (Shiva).
 
 ## Directory Structure
 ```

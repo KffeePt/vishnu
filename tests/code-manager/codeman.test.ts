@@ -1,8 +1,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MainMenuDef as MainMenu } from '../../codeman/menus/definitions/main-menu';
-import { DevDojoMenuDef as DevDojoMenu } from '../../codeman/menus/definitions/dev-dojo-menu';
-import { State } from '../../codeman/core/state';
+import { MainMenuDef as MainMenu } from '../../codeman/config/menu-map';
+import { DevDojoMenuDef as DevDojoMenu } from '../../codeman/config/menu-map';
+import { GlobalState } from '../../codeman/core/state';
 import { List } from '../../codeman/components/list';
 
 // Mock dependencies
@@ -30,7 +30,7 @@ vi.mock('child_process', () => {
 });
 
 describe('CodeMan Menus (Unit)', () => {
-    let mockState: State;
+    let mockState: GlobalState;
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -40,7 +40,7 @@ describe('CodeMan Menus (Unit)', () => {
             setProjectType: vi.fn(),
             user: { email: 'test@example.com' },
             debugMode: false,
-        } as unknown as State;
+        } as unknown as GlobalState;
     });
 
     describe('MainMenu', () => {
@@ -79,7 +79,7 @@ describe('CodeMan Menus (Unit)', () => {
             mockState.project.type = 'nextjs';
             const options = DevDojoMenu.options;
             const resolvedOptions = typeof options === 'function' ? await options(mockState) : options;
-            const values = resolvedOptions.map(o => o.value);
+            const values = resolvedOptions.map((o: any) => o.value);
 
             expect(values).toContain('dev-dojo-mode');
             expect(values).toContain('dev-server'); // generic or nextjs specific

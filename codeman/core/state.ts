@@ -1,6 +1,7 @@
 export interface ProjectConfig {
     type: 'nextjs' | 'flutter' | 'python' | 'cpp' | 'custom' | 'unknown';
     rootPath: string;
+    id?: string;
 }
 
 export interface AgentMemory {
@@ -29,11 +30,13 @@ export class GlobalState {
     public cloudFeaturesEnabled: boolean = false; // Controls whether Auth/Firebase features are active
     public restartTargetNode?: string; // Where to land after a restart (e.g. 'ROOT' or 'AUTH')
     public shouldRestart: boolean = false;
+    public rawIdToken?: string;
 
     public user?: {
         email: string;
         uid: string;
         isAdmin: boolean;
+        role: 'owner' | 'projectManager' | 'senior' | 'dev' | 'junior' | 'admin' | 'maintainer' | 'staff';
     };
 
     public deleteContext?: {
@@ -61,7 +64,7 @@ export class GlobalState {
         this.project.type = type;
     }
 
-    public setUser(user: { email: string; uid: string; isAdmin: boolean }) {
+    public setUser(user: { email: string; uid: string; isAdmin: boolean; role: 'owner' | 'projectManager' | 'senior' | 'dev' | 'junior' | 'admin' | 'maintainer' | 'staff' }) {
         this.user = user;
     }
 }

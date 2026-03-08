@@ -85,9 +85,32 @@ PROJECT_DIR="$GITHUB_DIR/vishnu"
 mkdir -p "$GITHUB_DIR"
 
 if [ -d "$PROJECT_DIR" ]; then
-    log_info "Updating existing repository..."
+    log_info "Evaluating repository updates..."
     cd "$PROJECT_DIR"
-    git pull origin main
+    
+    CURRENT_VERSION="unknown"
+    if [ -f "version.json" ]; then
+        CURRENT_VERSION=$(grep '"version"' version.json | head -n 1 | sed -E 's/.*"version": ?"([^"]+)".*/\1/')
+    fi
+    
+    log_info "Current version: $CURRENT_VERSION"
+    git fetch origin main >/dev/null 2>&1
+    
+    REMOTE_VERSION=$(git show origin/main:version.json 2>/dev/null | grep '"version"' | head -n 1 | sed -E 's/.*"version": ?"([^"]+)".*/\1/' || echo "unknown")
+    
+    if [ "$REMOTE_VERSION" != "unknown" ] && [ "$CURRENT_VERSION" != "$REMOTE_VERSION" ]; then
+        log_info "✨ Update available! ($CURRENT_VERSION -> $REMOTE_VERSION)"
+        read -p "Update now? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            log_warn "Skipping update."
+        else
+            log_info "Updating repository..."
+            git pull origin main
+        fi
+    else
+        log_ok "Already up to date."
+    fi
 else
     log_info "Cloning repository..."
     cd "$GITHUB_DIR"

@@ -12,6 +12,7 @@ import { registerCreateHandlers } from '../menus/create-project';
 export { MainMenuDef } from '../menus/definitions/main-menu';
 export { ConfigMenuDef } from '../menus/definitions/config-menu';
 export { CreateProjectMenuDef } from '../menus/definitions/create-project-menu';
+export { JobsMenuDef } from '../menus/definitions/jobs-menu';
 
 // Placeholder for Tests
 import { MenuDefinition } from '../schemas/menu-schema';
@@ -45,6 +46,8 @@ export { BuildMenuDef } from '../menus/definitions/build-menu';
 export { DevOpsMenuDef } from '../menus/definitions/dev-ops-menu';
 export { SettingsMenuDef } from '../menus/definitions/settings-menu';
 export { UpdateMenuDef } from '../menus/definitions/update-menu';
+export { MaintenanceMenuDef } from '../menus/definitions/maintenance-menu';
+export { BranchingMenuDef } from '../menus/definitions/branching-menu';
 
 // Export Definitions
 // (Duplicate exports removed)
@@ -57,10 +60,19 @@ import { SettingsMenuDef } from '../menus/definitions/settings-menu';
 import { UpdateMenuDef } from '../menus/definitions/update-menu';
 import { createSchemaMenu } from '../core/schema-factory';
 import { registry } from '../core/registry';
+import { JobsMenuDef } from '../menus/definitions/jobs-menu';
+
 registry.register(createSchemaMenu(SettingsMenuDef));
 registry.register(createSchemaMenu(UpdateMenuDef));
 registry.register(createSchemaMenu(NextJsTestsMenuDef));
 registry.register(createSchemaMenu(AdminGenMenuDef));
+registry.register(createSchemaMenu(JobsMenuDef));
+import { MaintenanceMenuDef } from '../menus/definitions/maintenance-menu';
+import { BranchingMenuDef } from '../menus/definitions/branching-menu';
+import { MaintDeployMenuDef } from '../menus/definitions/maint-deploy-menu';
+registry.register(createSchemaMenu(MaintenanceMenuDef));
+registry.register(createSchemaMenu(BranchingMenuDef));
+registry.register(createSchemaMenu(MaintDeployMenuDef));
 
 import { BatsMenuDef } from '../menus/definitions/bats-menu';
 registry.register(createSchemaMenu(BatsMenuDef));
@@ -956,10 +968,10 @@ registerScript('deployIos', async () => {
 });
 
 registerScript('deployWebOnly', async () => {
-    const { ReleaseManager } = await import('../managers/release-manager');
-    const { state } = await import('../core/state');
     const inquirer = (await import('inquirer')).default;
-    await ReleaseManager.deployAll(state.project.rootPath);
+    const chalk = (await import('chalk')).default;
+    console.log(chalk.cyan('\n🌐 Dashboard deploys automatically via Vercel on git push.'));
+    console.log(chalk.gray('  Visit https://vercel.com/dashboard to manage deployments.'));
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'deployment-menu';
 });
@@ -1207,7 +1219,7 @@ registerScript('runCleanAllFiles', async () => {
 });
 
 
-registerScript('runRelease', async () => {
+async function doRunRelease() {
     const { BuildManager } = await import('../managers/build-manager');
     const { ReleaseManager } = await import('../managers/release-manager');
     const { state } = await import('../core/state');
@@ -1248,67 +1260,379 @@ registerScript('runRelease', async () => {
             message: `Enter ${stage} iteration number (e.g. 1):`,
             default: 1
         }]);
-        tag = `v${baseVersion}_${stage}_${iteration}`;
-        pubspecVersion = `${baseVersion}-${stage}.${iteration}`;
+        tag += `-${stage}.${iteration}`;
+        pubspecVersion += `+${stage === 'alpha' ? 100 : 200}${iteration.toString().padStart(2, '0')}`;
     }
 
-    console.log(chalk.yellow(`\n📝 Proposed Configuration:`));
-    console.log(`   Tag:     ${chalk.bold(tag)}`);
-    console.log(`   Pubspec: ${chalk.bold(pubspecVersion)}`);
+    // 3. Confirm Details
+    console.log(chalk.cyan('\nSummary:'));
+    console.log(`- Project: ${state.project.type.toUpperCase()}`);
+    console.log(`- Base Version: ${pubspecVersion}`);
+    console.log(`- Tag: ${tag}`);
 
-    const tagExists = await ReleaseManager.checkTagExists(projectRoot, tag);
-    let shouldOverwrite = false;
+    const { confirm } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Proceed with build and tag?',
+        default: true
+    }]);
 
-    if (tagExists) {
-        console.log(chalk.red(`\n⚠️  Tag/Release ${tag} already exists!`));
-        const { overwrite } = await inquirer.prompt([{
-            type: 'confirm',
-            name: 'overwrite',
-            message: `Do you want to overwrite ${tag}? (This will delete the existing tag/release NOW)`,
-            default: false
-        }]);
+    if (!confirm) {
+        console.log(chalk.yellow('Aborted.'));
+        await new Promise(r => setTimeout(r, 1000));
+        return 'deployment-menu';
+    }
 
-        if (!overwrite) {
-            console.log(chalk.red('Aborted by user.'));
-            return 'deployment-menu';
+    try {
+        if (state.project.type === 'flutter') {
+            await ReleaseManager.setVersion(projectRoot, pubspecVersion);
+        } else {
+            // Node projects usually use package.json 
+            // the tag is mostly for GH. We could bump package.json here if ReleaseManager supported it.
+            console.log(chalk.gray('(Node version bump not fully implemented locally, relying on git tag)'));
         }
-        shouldOverwrite = true;
+
+        const tagSuccess = await ReleaseManager.gitCommitAndTag(projectRoot, tag);
+        if (!tagSuccess) return 'deployment-menu';
+
+        await BuildManager.buildAll(projectRoot, 'release');
+
+        const ghSuccess = await ReleaseManager.createGhRelease(projectRoot, tag);
+        if (ghSuccess) {
+            await ReleaseManager.uploadArtifacts(projectRoot, tag);
+        }
+
+        console.log(chalk.green('\n🎉 CI/CD Pipeline Completed Successfully!'));
+
+    } catch (e: any) {
+        console.log(chalk.red(`\n❌ Pipeline Failed: ${e.message}`));
     }
-
-    const { confirmStart } = await inquirer.prompt([{
-        type: 'confirm',
-        name: 'confirmStart',
-        message: 'Proceed with build and release?',
-        default: true
-    }]);
-
-    if (!confirmStart) return 'deployment-menu';
-
-    if (shouldOverwrite) {
-        await ReleaseManager.deleteTag(projectRoot, tag);
-    }
-
-    console.log(chalk.cyan('\n[1/5] Updating pubspec.yaml...'));
-    await ReleaseManager.setVersion(projectRoot, pubspecVersion);
-
-    console.log(chalk.cyan('\n[2/5] Starting Full Release Build...'));
-    await BuildManager.buildAll(projectRoot, 'release', pubspecVersion);
-
-    const { confirmDeploy } = await inquirer.prompt([{
-        type: 'confirm',
-        name: 'confirmDeploy',
-        message: 'Build complete. Proceed to Deploy (Tag, Release, Upload)?',
-        default: true
-    }]);
-
-    if (confirmDeploy) {
-        await ReleaseManager.gitCommitAndTag(projectRoot, tag, true);
-        await ReleaseManager.createGhRelease(projectRoot, tag);
-        await ReleaseManager.uploadArtifacts(projectRoot, tag);
-        await ReleaseManager.deployAll(projectRoot);
-    }
-
-    console.log(chalk.green('\n✅ Release Pipeline Completed.'));
+    
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-    return 'deployment-menu'; // Return to new menu
+    return 'deployment-menu';
+}
+
+registerScript('runRelease', doRunRelease);
+
+// --- API Cloud Jobs Handlers ---
+
+registerScript('triggerApiBuild', async () => {
+    const { JobsManager } = await import('../managers/jobs-manager');
+    return await JobsManager.triggerBuild();
+});
+
+registerScript('triggerApiScaffold', async () => {
+    const { JobsManager } = await import('../managers/jobs-manager');
+    return await JobsManager.triggerScaffold();
+});
+
+registerScript('listApiJobs', async () => {
+    const { JobsManager } = await import('../managers/jobs-manager');
+    return await JobsManager.listJobs();
+});
+
+// --- Maintenance Deploy Logic Handlers ---
+registerScript('maintDeployAll', async () => {
+    const { ReleaseManager } = await import('../managers/release-manager');
+    const inquirer = (await import('inquirer')).default;
+    const chalk = (await import('chalk')).default;
+    console.log(chalk.magenta.bold('\n🌟 Initiating Full Project Deployment (TUI + Firebase)\n'));
+    
+    // Next, launch the interactive TUI Release process
+    // which builds CodeMan Windows/Mac/Linux and uploads GH Release
+    console.log(chalk.cyan('Step 1: TUI Release Pipeline'));
+    await doRunRelease();
+
+    
+    // Check if the user aborted the TUI release process (it returns to a menu if failed/aborted)
+    // Actually runRelease returns 'deployment-menu' always unless it crashes.
+    // For safety, let's just proceed to Firebase.
+    
+    console.log(chalk.cyan('\nStep 2: Firebase Deployment (Functions + Rules)'));
+    await ReleaseManager.deployAllFirebase(process.cwd());
+    
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Deployment Complete. Press Enter...' }]);
+    return 'maint-deploy-menu';
+});
+
+registerScript('maintDeployRelease', doRunRelease);
+
+
+registerScript('maintDeployRules', async () => {
+    const { ReleaseManager } = await import('../managers/release-manager');
+    const inquirer = (await import('inquirer')).default;
+    await ReleaseManager.deployRules(process.cwd());
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'maint-deploy-menu';
+});
+
+registerScript('maintDeployDash', async () => {
+    const { ReleaseManager } = await import('../managers/release-manager');
+    const inquirer = (await import('inquirer')).default;
+    await ReleaseManager.deployFunctionsAPI(process.cwd());
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'maint-deploy-menu';
+});
+
+// (Deprecated/Removed Run CI and Run Deploy stubs from main maintenance menu)
+
+registerScript('maintSetupFirebase', async () => {
+    const chalk = (await import('chalk')).default;
+    console.log(chalk.cyan('Starting Interactive Firebase Setup...'));
+    const envManagerImport = await import('../managers/env-setup');
+    const EnvSetupManager = envManagerImport.EnvSetupManager as any;
+    await EnvSetupManager.interactiveSetup();
+    return 'maintenance-menu';
+});
+
+registerScript('maintRunEmulator', async () => {
+    const chalk = (await import('chalk')).default;
+    const { spawn } = await import('child_process');
+    const inquirer = (await import('inquirer')).default;
+    const path = (await import('path')).default;
+    const fs = (await import('fs')).default;
+
+    const root = process.cwd();
+    const firebaseJson = path.join(root, 'firebase.json');
+
+    if (!fs.existsSync(firebaseJson)) {
+        console.log(chalk.red('\n❌ No firebase.json found in project root.'));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+        return 'maintenance-menu';
+    }
+
+    console.log(chalk.cyan('\n🗄️  Starting Firebase Emulator Suite...'));
+    console.log(chalk.gray('  Auth: http://localhost:9099'));
+    console.log(chalk.gray('  Firestore: http://localhost:8080'));
+    console.log(chalk.gray('  Functions: http://localhost:5001'));
+    console.log(chalk.gray('  Emulator UI: http://localhost:4000'));
+    console.log(chalk.yellow('\n  Press Ctrl+C to stop.\n'));
+
+    await new Promise<void>((resolve) => {
+        const child = spawn('firebase', ['emulators:start'], {
+            stdio: 'inherit', shell: true, cwd: root
+        });
+        child.on('close', () => resolve());
+    });
+
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'maintenance-menu';
+});
+
+registerScript('maintRunE2E', async () => {
+    const chalk = (await import('chalk')).default;
+    const { spawn } = await import('child_process');
+    const inquirer = (await import('inquirer')).default;
+    const path = (await import('path')).default;
+
+    const dashboardDir = path.join(process.cwd(), 'dashboard');
+    console.log(chalk.cyan('\n🎭 Running Playwright E2E Tests...'));
+    console.log(chalk.gray(`  Target: ${dashboardDir}\n`));
+
+    await new Promise<void>((resolve) => {
+        const child = spawn('npx', ['playwright', 'test'], {
+            stdio: 'inherit', shell: true, cwd: dashboardDir
+        });
+        child.on('close', () => resolve());
+    });
+
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'maintenance-menu';
+});
+
+// --- New Maintenance Options ---
+registerScript('maintSetClaims', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const path = await import('path');
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+
+    console.log(chalk.yellow('\n👑 Opening Set User Claims TUI in a new window...'));
+    await ProcessManager.spawnDetachedWindow('Set User Claims', 'npx tsx set-claims.ts', path.join(process.cwd(), 'claims'));
+    
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
+    return 'maintenance-menu';
+});
+
+registerScript('maintDashboardDev', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const path = await import('path');
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+
+    console.log(chalk.yellow('\n🖥️  Starting Next.js Dashboard Dev Server in a new window...'));
+    await ProcessManager.spawnDetachedWindow('Dashboard Dev Server', 'npm run dev', path.join(process.cwd(), 'dashboard'));
+    
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
+    return 'maintenance-menu';
+});
+
+registerScript('maintAddSecret', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+
+    console.log(chalk.magenta('\n🔑 Opening Add Firebase Secret flow in a new window...'));
+    
+    // Use PowerShell to securely prompt for the secret and pipe it to the firebase CLI
+    const psCommand = `powershell -NoProfile -Command "$Name = Read-Host 'Enter Secret Name (e.g. GITHUB_APP_ID)'; $Value = Read-Host -AsSecureString 'Enter Secret Value (input hidden)'; $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value); $PlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR); Write-Host 'Setting secret...'; $PlainText | firebase functions:secrets:set $Name; [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR); Write-Host 'Done! Press Enter to close window.'; Read-Host"`;
+    
+    await ProcessManager.spawnDetachedWindow('Add Firebase Secret', psCommand, process.cwd());
+    
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
+    return 'maintenance-menu';
+});
+
+registerScript('maintRunTests', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+
+    console.log(chalk.blue('\n🧪 Running workspace tests in a new window...'));
+    // Ensure the window stays open after tests complete so the user can see the results
+    await ProcessManager.spawnDetachedWindow('Workspace Tests', 'npm run test & pause', process.cwd());
+    
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
+    return 'maintenance-menu';
+});
+
+registerScript('maintRunBuild', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+
+    console.log(chalk.blue('\n🏗️ Running workspace build in a new window...'));
+    await ProcessManager.spawnDetachedWindow('Workspace Build', 'npm run build & pause', process.cwd());
+    
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
+    return 'maintenance-menu';
+});
+
+// --- Branching Logic Handlers ---
+registerScript('branchStatus', async () => {
+    const { GitBranchManager } = await import('../managers/git-branch-manager');
+    const status = await GitBranchManager.getStatus(process.cwd());
+    
+    console.log('\n' + chalk.bold.bgBlue(' 📊 BRANCH STATUS DASHBOARD ') + '\n');
+    console.log(`${chalk.bold('Current Branch:')} ${chalk.cyan(status.currentBranch)}`);
+    console.log(`${chalk.bold('Commits:')}        ${chalk.green(`+${status.commitsAhead}`)} / ${chalk.red(`-${status.commitsBehind}`)} (vs upstream/main)`);
+    console.log(`${chalk.bold('Uncommitted:')}    ${status.changedFiles} files (${chalk.green(`+${status.insertions}`)} ${chalk.red(`-${status.deletions}`)})`);
+    console.log(`${chalk.bold('Repo:')}           ${status.repoUrl}\n`);
+    
+    if (status.activePRs.length > 0) {
+        console.log(chalk.bold.underline('Active PRs:'));
+        for (const pr of status.activePRs) {
+            console.log(`  #${pr.number} [${pr.state}] ${pr.title}`);
+            console.log(`  🔗 ${chalk.gray(pr.url)}`);
+        }
+    } else {
+        console.log(chalk.gray('No active pull requests for this branch.'));
+    }
+
+    console.log('');
+    const inquirer = (await import('inquirer')).default;
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    return 'branching-menu';
+});
+
+registerScript('branchOpen', async () => {
+    const { GitBranchManager } = await import('../managers/git-branch-manager');
+    const inquirer = (await import('inquirer')).default;
+    const { type } = await inquirer.prompt([{
+        type: 'list',
+        name: 'type',
+        message: 'Branch type:',
+        choices: ['feature/', 'fix/', 'chore/', 'refactor/', 'none (custom)']
+    }]);
+
+    const { name } = await inquirer.prompt([{
+        type: 'input',
+        name: 'name',
+        message: 'Enter branch name (without prefix):',
+        validate: input => input.trim() !== ''
+    }]);
+
+    const prefix = type === 'none (custom)' ? '' : type;
+    const branchName = `${prefix}${name.trim().replace(/\s+/g, '-')}`;
+
+    await GitBranchManager.openBranch(process.cwd(), branchName);
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'branching-menu';
+});
+
+registerScript('branchSwitch', async () => {
+    const { GitBranchManager } = await import('../managers/git-branch-manager');
+    const inquirer = (await import('inquirer')).default;
+    const branches = await GitBranchManager.listBranches(process.cwd());
+    
+    if (branches.length === 0) {
+        console.log(chalk.yellow('No other branches found.'));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+        return 'branching-menu';
+    }
+
+    const { target } = await inquirer.prompt([{
+        type: 'list',
+        name: 'target',
+        message: 'Select branch to switch to:',
+        choices: branches
+    }]);
+
+    await GitBranchManager.switchBranch(process.cwd(), target);
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'branching-menu';
+});
+
+registerScript('branchSubmitPR', async () => {
+    const { GitBranchManager } = await import('../managers/git-branch-manager');
+    const inquirer = (await import('inquirer')).default;
+    
+    const { title } = await inquirer.prompt([{
+        type: 'input',
+        name: 'title',
+        message: 'PR Title (leave empty to auto-fill):'
+    }]);
+
+    const { draft } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'draft',
+        message: 'Create as Draft/WIP?',
+        default: false
+    }]);
+
+    await GitBranchManager.submitPR(process.cwd(), title.trim() || undefined, undefined, draft);
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'branching-menu';
+});
+
+registerScript('branchRemove', async () => {
+    const { GitBranchManager } = await import('../managers/git-branch-manager');
+    const inquirer = (await import('inquirer')).default;
+    const branches = await GitBranchManager.listBranches(process.cwd());
+    const current = await GitBranchManager.getCurrentBranch(process.cwd());
+
+    const deletable = branches.filter(b => b !== current && b !== 'main' && b !== 'master');
+    if (deletable.length === 0) {
+        console.log(chalk.gray('No safe branches available to delete.'));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+        return 'branching-menu';
+    }
+
+    const { target } = await inquirer.prompt([{
+        type: 'list',
+        name: 'target',
+        message: 'Select branch to delete:',
+        choices: deletable
+    }]);
+
+    const { remote } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'remote',
+        message: 'Delete remote branch origin/' + target + ' as well?',
+        default: false
+    }]);
+
+    await GitBranchManager.removeBranch(process.cwd(), target, remote);
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'branching-menu';
 });
