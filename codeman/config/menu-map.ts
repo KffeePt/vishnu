@@ -390,6 +390,42 @@ registerScript('create-full-stack', async () => {
     return 'boilerplates';
 });
 
+registerScript('manage-shadcn', async () => {
+    const { manageShadcnRegistry } = await import('../commands/boilerplate');
+    await manageShadcnRegistry();
+    return 'boilerplates';
+});
+
+registerScript('create-flutter-widget', async () => {
+    const { createFlutterWidget } = await import('../commands/boilerplate');
+    await createFlutterWidget();
+    return 'boilerplates';
+});
+
+registerScript('create-flutter-widget-part', async () => {
+    const { createFlutterWidgetPart } = await import('../commands/boilerplate');
+    await createFlutterWidgetPart();
+    return 'boilerplates';
+});
+
+registerScript('create-flutter-screen', async () => {
+    const { createFlutterScreen } = await import('../commands/boilerplate');
+    await createFlutterScreen();
+    return 'boilerplates';
+});
+
+registerScript('create-flutter-feature', async () => {
+    const { createFlutterFeature } = await import('../commands/boilerplate');
+    await createFlutterFeature();
+    return 'boilerplates';
+});
+
+registerScript('create-flutter-state', async () => {
+    const { createFlutterState } = await import('../commands/boilerplate');
+    await createFlutterState();
+    return 'boilerplates';
+});
+
 // --- Dev Dojo Handlers ---
 registerScript('run-dev-server', async () => {
     const { runDevServer } = await import('../commands/dev-server');
@@ -716,67 +752,60 @@ registerScript('manageGeminiKeys', async () => {
 
 // --- Build Manager Handlers ---
 registerScript('runBuildAll', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-
-    await BuildManager.buildAll(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    
+    // Spawn detached CLI command to build all without blocking TUI
+    await ProcessManager.spawnDetachedWindow('Release Prep / Build All', 'codeman --run-build-all', state.project.rootPath);
     return 'build-menu';
 });
 
 registerScript('runTests', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-
-    await BuildManager.runTests(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    
+    // Spawn detached terminal
+    await ProcessManager.spawnDetachedWindow('Full Test Suite', 'codeman --run-tests', state.project.rootPath);
     return 'build-menu';
 });
 
 registerScript('runUnitTestsFlutter', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-    await BuildManager.runUnitTests(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+
+    await ProcessManager.spawnDetachedWindow('Unit Tests', 'codeman --run-unit-tests-flutter', state.project.rootPath);
     return 'build-menu';
 });
 
 registerScript('runWidgetTestsFlutter', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-    await BuildManager.runWidgetTests(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+
+    await ProcessManager.spawnDetachedWindow('Widget Tests', 'codeman --run-widget-tests-flutter', state.project.rootPath);
     return 'build-menu';
 });
 
 registerScript('runPatrolTests', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-    await BuildManager.runPatrolTests(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+
+    await ProcessManager.spawnDetachedWindow('Patrol Tests', 'codeman --run-patrol-tests', state.project.rootPath);
     return 'build-menu';
 });
 
 registerScript('runMaestroTests', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-    await BuildManager.runMaestroTests(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+
+    await ProcessManager.spawnDetachedWindow('Maestro Tests', 'codeman --run-maestro-tests', state.project.rootPath);
     return 'build-menu';
 });
 
 registerScript('runPlaywrightTests', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-    await BuildManager.runPlaywrightTests(state.project.rootPath);
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+
+    await ProcessManager.spawnDetachedWindow('Playwright Tests', 'codeman --run-e2e', state.project.rootPath);
     return 'build-menu';
 });
 
@@ -979,26 +1008,9 @@ registerScript('deployWebOnly', async () => {
 // --- Tag & Release Handlers ---
 
 registerScript('createTagRelease', async () => {
-    // Interactive part extracted from runRelease
-    // For now, simpler version
-    const { ReleaseManager } = await import('../managers/release-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    const inquirer = (await import('inquirer')).default;
-
-    const { version } = await inquirer.prompt([{
-        type: 'input',
-        name: 'version',
-        message: 'Tag Version (e.g. v1.0.1):',
-        validate: (v: string) => v.startsWith('v') ? true : 'Must start with v'
-    }]);
-
-    await ReleaseManager.gitCommitAndTag(state.project.rootPath, version);
-    const { createRel } = await inquirer.prompt([{ type: 'confirm', name: 'createRel', message: 'Create GH Release now?', default: true }]);
-    if (createRel) {
-        await ReleaseManager.createGhRelease(state.project.rootPath, version);
-    }
-
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    await ProcessManager.spawnDetachedWindow('Release & Tag Flow', 'codeman --run-release-flow', state.project.rootPath);
     return 'tag-release-menu';
 });
 
@@ -1219,7 +1231,7 @@ registerScript('runCleanAllFiles', async () => {
 });
 
 
-async function doRunRelease() {
+export async function doRunRelease() {
     const { BuildManager } = await import('../managers/build-manager');
     const { ReleaseManager } = await import('../managers/release-manager');
     const { state } = await import('../core/state');
@@ -1312,7 +1324,13 @@ async function doRunRelease() {
     return 'deployment-menu';
 }
 
-registerScript('runRelease', doRunRelease);
+registerScript('runRelease', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const { state } = await import('../core/state');
+    
+    await ProcessManager.spawnDetachedWindow('CI/CD Release', 'codeman --run-release', state.project.rootPath);
+    return 'deployment-menu';
+});
 
 // --- API Cloud Jobs Handlers ---
 
@@ -1635,4 +1653,52 @@ registerScript('branchRemove', async () => {
     await GitBranchManager.removeBranch(process.cwd(), target, remote);
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'branching-menu';
+});
+registerScript('enterMaintenance', async () => {
+    const { AuthService } = await import('../core/auth');
+    const { state } = await import('../core/state');
+    const chalk = (await import('chalk')).default;
+    const path = (await import('path')).default;
+
+    console.log(chalk.magenta('\n🔒 Verifying Administrative Access...'));
+    
+    // Force Auth against Vishnu Project
+    const vishnuRoot = process.env.VISHNU_ROOT || process.cwd();
+    const claimsPath = path.join(vishnuRoot, 'claims');
+
+    // Switch context to Vishnu Root for Maintenance
+    process.chdir(vishnuRoot);
+    state.project.rootPath = vishnuRoot;
+    
+    const vishnuAuth = {
+        projectId: 'vishnu-b65bd',
+        apiKey: 'AIzaSyCSntkOv0yMAAF2CduDvl638EsdMN6xU1U',
+        authDomain: 'vishnu-b65bd.firebaseapp.com',
+        serviceAccount: path.join(claimsPath, 'admin-sdk.json')
+    };
+
+    const success = await AuthService.login(state, vishnuAuth);
+
+    if (success && state.user?.isAdmin) {
+        return 'maintenance-menu';
+    } else {
+        const inquirer = (await import('inquirer')).default;
+        console.error(chalk.red('\n🚫 Unauthorized. Maintenance tools are restricted to Owners/Admins of the Vishnu project.'));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+        return 'settings';
+    }
+});
+
+registerScript('maintDeployPrep', async () => {
+    const { ProcessManager } = await import('../core/process-manager');
+    const { state } = await import('../core/state');
+    
+    // We launch the newly created CLI flag in a detached window
+    await ProcessManager.spawnDetachedWindow(
+        'Vishnu Deploy Prep', 
+        'codeman --run-maint-deploy-prep', 
+        process.cwd()
+    );
+    
+    return 'maint-deploy-menu';
 });

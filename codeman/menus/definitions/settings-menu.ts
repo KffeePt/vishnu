@@ -18,7 +18,7 @@ export const SettingsMenuDef: MenuDefinition = {
         {
             label: '🔧 Maintenance',
             value: 'maintenance',
-            action: { type: 'navigate', target: 'maintenance-menu' }
+            action: { type: 'script', handler: 'enterMaintenance' }
         },
         { label: '---', value: 'sep1', type: 'separator' },
         {

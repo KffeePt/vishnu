@@ -71,7 +71,7 @@ async function getProjectOptions(s: GlobalState): Promise<MenuOption[]> {
 
     // 1. Dev Dojo (Samurai Mode)
     options.push({
-        label: '🏯 Dev Dojo (Samurai Mode)',
+        label: '🏯 Dev Dojo',
         value: 'dev-dojo',
         action: { type: 'navigate', target: 'dev-dojo' }
     });

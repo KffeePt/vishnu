@@ -18,7 +18,7 @@ export const getDevDojoOptions = async (state: GlobalState): Promise<MenuOption[
     // 2. Samurai Mode (Environment) - SECOND
     // Only show if relevant (or always show as a generic runner?)
     options.push(
-        { label: '🥷  Samurai Mode (Run Dev Environment)', value: 'dev-dojo-mode', action: { type: 'script', handler: 'dev-dojo-mode' } }
+        { label: '🥷  Dev Environment', value: 'dev-dojo-mode', action: { type: 'script', handler: 'dev-dojo-mode' } }
     );
 
     options.push({ label: '---', value: 'sep1', type: 'separator' });

@@ -5,6 +5,7 @@ import { createSpinner } from '../components/spinner';
 import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import { createComponent } from './create-component';
 export { createComponent };
 import { MenuConfig, ScreenFactory } from '../utils/menu-system';
@@ -272,6 +273,535 @@ export async function POST(request: Request) {
         spinner.succeed(`Created API route at /app/api/${routeEndpoint}/route.ts`);
     } catch (e: any) {
         spinner.fail(e.message);
+    }
+}
+
+// --- Flutter Boilerplates ---
+
+export async function createFlutterWidget(options?: { widgetName?: string }) {
+    try {
+        await assertFlutterProject();
+    } catch (e: any) {
+        console.log(chalk.red(e.message));
+        return;
+    }
+
+    const { widgetName, createPart } = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'widgetName',
+            message: 'Widget Name (snake_case or kebab-case):',
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'confirm',
+            name: 'createPart',
+            message: 'Create a starter part file?',
+            default: true
+        }
+    ], options);
+
+    const snakeName = toSnakeCase(widgetName);
+    const pascalName = toPascalCase(snakeName);
+
+    const spinner = createSpinner('Creating Flutter widget...').start();
+
+    try {
+        const baseDir = path.join(process.cwd(), 'lib', 'ui', 'components', snakeName);
+        const partsDir = path.join(baseDir, 'parts');
+
+        if (await fs.pathExists(baseDir)) {
+            throw new Error(`Widget folder already exists: lib/ui/components/${snakeName}`);
+        }
+
+        await fs.ensureDir(baseDir);
+
+        const entryPath = path.join(baseDir, `${snakeName}.dart`);
+        const widgetPath = path.join(baseDir, `${snakeName}_widget.dart`);
+
+        const entryContent = `export '${snakeName}_widget.dart';\n`;
+        const widgetContent = `${createPart ? `import 'package:flutter/material.dart';\nimport 'parts/${snakeName}_part_a.dart';\n` : `import 'package:flutter/material.dart';\n`}\nclass ${pascalName} extends StatelessWidget {
+  final VoidCallback? onPressed;
+
+  const ${pascalName}({super.key, this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    ${createPart ? `return _${pascalName}PartA(onPressed: onPressed);` : `return FilledButton(
+      onPressed: onPressed,
+      child: const Text('${pascalName}'),
+    );`}
+  }
+}
+`;
+
+        await fs.writeFile(entryPath, entryContent);
+        await fs.writeFile(widgetPath, widgetContent);
+
+        if (createPart) {
+            await fs.ensureDir(partsDir);
+            const partPath = path.join(partsDir, `${snakeName}_part_a.dart`);
+            const partContent = `import 'package:flutter/material.dart';
+
+class _${pascalName}PartA extends StatelessWidget {
+  final VoidCallback? onPressed;
+
+  const _${pascalName}PartA({this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      onPressed: onPressed,
+      child: const Text('${pascalName}'),
+    );
+  }
+}
+`;
+            await fs.writeFile(partPath, partContent);
+        }
+
+        spinner.succeed(`Created Flutter widget at lib/ui/components/${snakeName}`);
+    } catch (e: any) {
+        spinner.fail(e.message);
+    }
+}
+
+export async function createFlutterScreen(options?: { featureName?: string, screenName?: string }) {
+    try {
+        await assertFlutterProject();
+    } catch (e: any) {
+        console.log(chalk.red(e.message));
+        return;
+    }
+
+    const answers = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'featureName',
+            message: 'Feature Name (snake_case or kebab-case):',
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'input',
+            name: 'screenName',
+            message: 'Screen Name (snake_case or kebab-case):',
+            default: (ans: any) => ans.featureName,
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        }
+    ], options);
+
+    const featureName = toSnakeCase(answers.featureName);
+    const screenName = toSnakeCase(answers.screenName);
+
+    const pascalScreenBase = toPascalCase(screenName);
+    const screenClass = ensureSuffix(pascalScreenBase, 'Screen');
+
+    const spinner = createSpinner('Creating Flutter screen...').start();
+
+    try {
+        await createFlutterScreenFiles(featureName, screenName, screenClass);
+        spinner.succeed(`Created Flutter screen at lib/features/${featureName}/presentation/${screenName}_screen.dart`);
+    } catch (e: any) {
+        spinner.fail(e.message);
+    }
+}
+
+export async function createFlutterState(options?: { featureName?: string, stateName?: string, type?: 'bloc' | 'cubit' }) {
+    try {
+        await assertFlutterProject();
+    } catch (e: any) {
+        console.log(chalk.red(e.message));
+        return;
+    }
+
+    const answers = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'featureName',
+            message: 'Feature Name (snake_case or kebab-case):',
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'input',
+            name: 'stateName',
+            message: 'Bloc/Cubit Name (snake_case or kebab-case):',
+            default: (ans: any) => ans.featureName,
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'list',
+            name: 'type',
+            message: 'State Management Type:',
+            choices: [
+                { name: 'Cubit (flutter_bloc)', value: 'cubit' },
+                { name: 'Bloc (flutter_bloc)', value: 'bloc' }
+            ]
+        }
+    ], options);
+
+    const featureName = toSnakeCase(answers.featureName);
+    const stateName = toSnakeCase(answers.stateName);
+    const pascalBase = toPascalCase(stateName);
+
+    const spinner = createSpinner('Creating Flutter state files...').start();
+
+    try {
+        await createFlutterStateFiles(featureName, stateName, answers.type);
+        spinner.succeed(`Created ${answers.type} files under lib/features/${featureName}/state`);
+    } catch (e: any) {
+        spinner.fail(e.message);
+    }
+}
+
+export async function createFlutterWidgetPart() {
+    try {
+        await assertFlutterProject();
+    } catch (e: any) {
+        console.log(chalk.red(e.message));
+        return;
+    }
+
+    const { FileExplorer } = await import('../utils/file-explorer');
+    const basePath = path.join(process.cwd(), 'lib', 'ui', 'components');
+    if (!await fs.pathExists(basePath)) {
+        console.log(chalk.red('lib/ui/components not found. Create a widget first.'));
+        return;
+    }
+
+    const explorer = new FileExplorer({
+        basePath,
+        title: 'Select Widget Folder',
+        onlyDirectories: true
+    });
+
+    const widgetDir = await explorer.selectPath();
+    if (!widgetDir) return;
+
+    const widgetName = path.basename(widgetDir);
+    const partsDir = path.join(widgetDir, 'parts');
+    await fs.ensureDir(partsDir);
+
+    const existingParts = (await fs.readdir(partsDir))
+        .filter(name => name.endsWith('.dart') && name.includes('_part_'))
+        .map(name => {
+            const match = name.match(/_part_([a-z])\.dart$/);
+            return match ? match[1] : null;
+        })
+        .filter(Boolean) as string[];
+
+    const nextLetter = getNextLetter(existingParts);
+    const defaultPartName = `${widgetName}_part_${nextLetter}`;
+
+    const { partName } = await inquirer.prompt([{
+        type: 'input',
+        name: 'partName',
+        message: 'Part file name (snake_case):',
+        default: defaultPartName,
+        validate: (input) => /^[a-z][a-z0-9_]*$/.test(input) || 'Use snake_case'
+    }]);
+
+    const snakePart = toSnakeCase(partName);
+    const partPath = path.join(partsDir, `${snakePart}.dart`);
+    if (await fs.pathExists(partPath)) {
+        console.log(chalk.red(`Part already exists: ${path.relative(process.cwd(), partPath)}`));
+        return;
+    }
+
+    const pascalWidget = toPascalCase(widgetName);
+    const pascalPart = toPascalCase(snakePart);
+
+    const partContent = `import 'package:flutter/material.dart';
+
+class _${pascalPart} extends StatelessWidget {
+  const _${pascalPart}();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox.shrink();
+  }
+}
+`;
+
+    await fs.writeFile(partPath, partContent);
+
+    const widgetFile = path.join(widgetDir, `${widgetName}_widget.dart`);
+    if (await fs.pathExists(widgetFile)) {
+        let content = await fs.readFile(widgetFile, 'utf-8');
+        const importLine = `import 'parts/${snakePart}.dart';`;
+        if (!content.includes(importLine)) {
+            content = insertAfterLastPartImport(content, importLine);
+            await fs.writeFile(widgetFile, content);
+        }
+    }
+
+    console.log(chalk.green(`Created part at lib/ui/components/${widgetName}/parts/${snakePart}.dart`));
+}
+
+export async function createFlutterFeature() {
+    try {
+        await assertFlutterProject();
+    } catch (e: any) {
+        console.log(chalk.red(e.message));
+        return;
+    }
+
+    const answers = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'featureName',
+            message: 'Feature Name (snake_case or kebab-case):',
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'input',
+            name: 'screenName',
+            message: 'Screen Name (snake_case or kebab-case):',
+            default: (ans: any) => ans.featureName,
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'input',
+            name: 'stateName',
+            message: 'Bloc/Cubit Name (snake_case or kebab-case):',
+            default: (ans: any) => ans.featureName,
+            validate: (input) => /^[a-zA-Z][a-zA-Z0-9-_]*$/.test(input) || 'Invalid name'
+        },
+        {
+            type: 'list',
+            name: 'stateType',
+            message: 'State Management Type:',
+            choices: [
+                { name: 'Cubit (flutter_bloc)', value: 'cubit' },
+                { name: 'Bloc (flutter_bloc)', value: 'bloc' }
+            ]
+        },
+        {
+            type: 'list',
+            name: 'routeKind',
+            message: 'Route access type:',
+            choices: [
+                { name: 'Public', value: 'public' },
+                { name: 'Auth (requires login)', value: 'auth' },
+                { name: 'Admin (requires admin)', value: 'admin' }
+            ],
+            default: 'auth'
+        },
+        {
+            type: 'input',
+            name: 'routePath',
+            message: 'Route path (e.g. "/appointments"):',
+            default: (ans: any) => `/${toKebabCase(ans.screenName)}`,
+            when: (ans: any) => ans.routeKind !== 'admin'
+        },
+        {
+            type: 'input',
+            name: 'adminSlug',
+            message: 'Admin sub-route slug (e.g. "usuarios"):',
+            default: (ans: any) => toKebabCase(ans.screenName),
+            when: (ans: any) => ans.routeKind === 'admin'
+        },
+        {
+            type: 'confirm',
+            name: 'useNamedRoutes',
+            message: 'Add GoRoute "name:" for named navigation?',
+            default: true
+        },
+        {
+            type: 'list',
+            name: 'routePlacement',
+            message: 'Where should the route be added?',
+            choices: [
+                { name: 'ShellRoute (app shell / drawer)', value: 'shell' },
+                { name: 'Top-level routes', value: 'root' }
+            ],
+            default: 'shell',
+            when: (ans: any) => ans.routeKind !== 'admin'
+        }
+    ]);
+
+    const featureName = toSnakeCase(answers.featureName);
+    const screenName = toSnakeCase(answers.screenName);
+    const stateName = toSnakeCase(answers.stateName);
+    const screenClass = ensureSuffix(toPascalCase(screenName), 'Screen');
+
+    const spinner = createSpinner('Creating Flutter feature...').start();
+
+    try {
+        await createFlutterScreenFiles(featureName, screenName, screenClass);
+        await createFlutterStateFiles(featureName, stateName, answers.stateType);
+
+        const routeConstName = answers.routeKind === 'admin'
+            ? `admin${toPascalCase(screenName)}`
+            : toCamelCase(screenName);
+
+        const normalizedRoutePath = answers.routeKind === 'admin'
+            ? String(answers.adminSlug || '').replace(/^\//, '')
+            : ensureLeadingSlash(String(answers.routePath || ''));
+
+        const wired = await wireGoRouter({
+            routePath: normalizedRoutePath,
+            routeConstName,
+            screenClass,
+            featureName,
+            screenName,
+            routeKind: answers.routeKind,
+            placement: answers.routeKind === 'admin' ? 'admin' : answers.routePlacement,
+            useNamedRoutes: answers.useNamedRoutes
+        });
+
+        spinner.succeed(`Feature created: ${featureName}`);
+        if (wired) {
+            console.log(chalk.green('GoRouter wiring completed.'));
+        } else {
+            console.log(chalk.yellow('GoRouter wiring skipped (router files not found).'));
+        }
+    } catch (e: any) {
+        spinner.fail(e.message);
+    }
+}
+
+// --- shadcn/ui Registry Manager ---
+
+export async function manageShadcnRegistry() {
+    const componentsJsonPath = path.join(process.cwd(), 'components.json');
+
+    if (!await fs.pathExists(componentsJsonPath)) {
+        const { init } = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'init',
+            message: 'components.json not found. Run shadcn init now?',
+            default: true
+        }]);
+
+        if (!init) return;
+
+        try {
+            await runShadcnCommand(['init']);
+        } catch (e: any) {
+            console.log(chalk.red(e.message));
+            return;
+        }
+        if (!await fs.pathExists(componentsJsonPath)) {
+            console.log(chalk.red('components.json still not found. Please run shadcn init manually.'));
+            return;
+        }
+    }
+
+    const { action } = await inquirer.prompt([{
+        type: 'list',
+        name: 'action',
+        message: 'Shadcn Registry Manager',
+        choices: [
+            { name: '➕ Add or Update Registry', value: 'add-registry' },
+            { name: '📚 List Registries', value: 'list-registries' },
+            { name: '⬇️  Install Component', value: 'add-component' },
+            { name: '🔎 Search Registry', value: 'search' },
+            { name: '👀 View Registry Item', value: 'view' },
+            { name: '⬅️  Back', value: 'back' }
+        ]
+    }]);
+
+    if (action === 'back') return;
+
+    const componentsJson = await fs.readJson(componentsJsonPath);
+    componentsJson.registries = componentsJson.registries || {};
+
+    if (action === 'add-registry') {
+        const { namespace, url } = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'namespace',
+                message: 'Registry Namespace (e.g. "@company-ui"):',
+                validate: (input) => /^@[\w-]+$/.test(input) || 'Use the @namespace format'
+            },
+            {
+                type: 'input',
+                name: 'url',
+                message: 'Registry URL template (use {name} placeholder):',
+                validate: (input) => input.includes('{name}') || 'URL must include {name}'
+            }
+        ]);
+
+        componentsJson.registries[namespace] = url;
+        await fs.writeJson(componentsJsonPath, componentsJson, { spaces: 2 });
+
+        console.log(chalk.green(`Registry ${namespace} saved to components.json`));
+        return;
+    }
+
+    if (action === 'list-registries') {
+        const entries = Object.entries(componentsJson.registries);
+        if (entries.length === 0) {
+            console.log(chalk.yellow('No registries configured yet.'));
+            return;
+        }
+
+        console.log(chalk.cyan('\nConfigured registries:'));
+        entries.forEach(([key, value]) => {
+            const display = typeof value === 'string' ? value : value?.url;
+            console.log(`- ${key}: ${display}`);
+        });
+        return;
+    }
+
+    if (action === 'add-component') {
+        const { componentRef } = await inquirer.prompt([{
+            type: 'input',
+            name: 'componentRef',
+            message: 'Component (e.g. "@shadcn/button" or full URL):',
+            validate: (input) => input.length > 0 || 'Required'
+        }]);
+
+        try {
+            await runShadcnCommand(['add', componentRef]);
+        } catch (e: any) {
+            console.log(chalk.red(e.message));
+        }
+        return;
+    }
+
+    if (action === 'search') {
+        const { registry, query } = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'registry',
+                message: 'Registry namespace (e.g. "@shadcn", "@company-ui"):',
+                default: '@shadcn'
+            },
+            {
+                type: 'input',
+                name: 'query',
+                message: 'Search query (optional):'
+            }
+        ]);
+
+        const args = ['search', registry];
+        if (query && query.trim().length > 0) {
+            args.push('-q', query.trim());
+        }
+        try {
+            await runShadcnCommand(args);
+        } catch (e: any) {
+            console.log(chalk.red(e.message));
+        }
+        return;
+    }
+
+    if (action === 'view') {
+        const { items } = await inquirer.prompt([{
+            type: 'input',
+            name: 'items',
+            message: 'Items to view (space-separated, e.g. "button card" or "@shadcn/button"):',
+            validate: (input) => input.trim().length > 0 || 'Required'
+        }]);
+
+        const args = ['view', ...items.trim().split(/\s+/)];
+        try {
+            await runShadcnCommand(args);
+        } catch (e: any) {
+            console.log(chalk.red(e.message));
+        }
+        return;
     }
 }
 
@@ -680,7 +1210,410 @@ export async function handleRefactorComponent() {
 }
 
 function toPascalCase(str: string) {
-    return str.replace(/(^\w|-\w)/g, (clear) => clear.replace('-', '').toUpperCase());
+    return str.replace(/(^\w|[-_]\w)/g, (clear) => clear.replace(/[-_]/, '').toUpperCase());
+}
+
+function toSnakeCase(str: string) {
+    return str
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .replace(/[-\s]+/g, '_')
+        .replace(/__+/g, '_')
+        .toLowerCase();
+}
+
+function ensureSuffix(value: string, suffix: string) {
+    return value.endsWith(suffix) ? value : `${value}${suffix}`;
+}
+
+function toCamelCase(str: string) {
+    const pascal = toPascalCase(str);
+    return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+function toKebabCase(str: string) {
+    return toSnakeCase(str).replace(/_/g, '-');
+}
+
+function ensureLeadingSlash(value: string) {
+    if (!value.startsWith('/')) return `/${value}`;
+    return value;
+}
+
+async function assertFlutterProject() {
+    const pubspecPath = path.join(process.cwd(), 'pubspec.yaml');
+    if (!await fs.pathExists(pubspecPath)) {
+        throw new Error('pubspec.yaml not found. Open a Flutter project root first.');
+    }
+}
+
+async function upsertBarrelExport(barrelPath: string, exportLine: string) {
+    const normalizedLine = exportLine.trim();
+    if (await fs.pathExists(barrelPath)) {
+        const content = await fs.readFile(barrelPath, 'utf-8');
+        if (!content.includes(normalizedLine)) {
+            const separator = content.endsWith('\n') ? '' : '\n';
+            await fs.writeFile(barrelPath, `${content}${separator}${normalizedLine}\n`);
+        }
+        return;
+    }
+
+    await fs.ensureDir(path.dirname(barrelPath));
+    await fs.writeFile(barrelPath, `${normalizedLine}\n`);
+}
+
+async function createFlutterScreenFiles(featureName: string, screenName: string, screenClass: string) {
+    const featureDir = path.join(process.cwd(), 'lib', 'features', featureName);
+    const presentationDir = path.join(featureDir, 'presentation');
+    await fs.ensureDir(presentationDir);
+
+    const screenPath = path.join(presentationDir, `${screenName}_screen.dart`);
+    if (await fs.pathExists(screenPath)) {
+        throw new Error(`Screen already exists: lib/features/${featureName}/presentation/${screenName}_screen.dart`);
+    }
+
+    const screenContent = `import 'package:flutter/material.dart';
+
+class ${screenClass} extends StatelessWidget {
+  const ${screenClass}({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('${screenClass}')),
+      body: const Center(
+        child: Text('${screenClass} content'),
+      ),
+    );
+  }
+}
+`;
+
+    await fs.writeFile(screenPath, screenContent);
+
+    const barrelPath = path.join(featureDir, `${featureName}.dart`);
+    const exportLine = `export 'presentation/${screenName}_screen.dart';`;
+    await upsertBarrelExport(barrelPath, exportLine);
+}
+
+async function createFlutterStateFiles(featureName: string, stateName: string, type: 'bloc' | 'cubit') {
+    const featureDir = path.join(process.cwd(), 'lib', 'features', featureName);
+    const stateDir = path.join(featureDir, 'state');
+    await fs.ensureDir(stateDir);
+
+    const barrelPath = path.join(featureDir, `${featureName}.dart`);
+    const pascalBase = toPascalCase(stateName);
+
+    if (type === 'cubit') {
+        const cubitPath = path.join(stateDir, `${stateName}_cubit.dart`);
+        const statePath = path.join(stateDir, `${stateName}_state.dart`);
+
+        if (await fs.pathExists(cubitPath) || await fs.pathExists(statePath)) {
+            throw new Error(`Cubit already exists for ${stateName}.`);
+        }
+
+        const stateContent = `class ${pascalBase}State {
+  const ${pascalBase}State();
+}
+`;
+
+        const cubitContent = `// Requires: bloc (or flutter_bloc) in pubspec.yaml
+import 'package:bloc/bloc.dart';
+import '${stateName}_state.dart';
+
+class ${pascalBase}Cubit extends Cubit<${pascalBase}State> {
+  ${pascalBase}Cubit() : super(const ${pascalBase}State());
+}
+`;
+
+        await fs.writeFile(statePath, stateContent);
+        await fs.writeFile(cubitPath, cubitContent);
+
+        await upsertBarrelExport(barrelPath, `export 'state/${stateName}_cubit.dart';`);
+        await upsertBarrelExport(barrelPath, `export 'state/${stateName}_state.dart';`);
+        return;
+    }
+
+    const blocPath = path.join(stateDir, `${stateName}_bloc.dart`);
+    const eventPath = path.join(stateDir, `${stateName}_event.dart`);
+    const statePath = path.join(stateDir, `${stateName}_state.dart`);
+
+    if (await fs.pathExists(blocPath) || await fs.pathExists(eventPath) || await fs.pathExists(statePath)) {
+        throw new Error(`Bloc already exists for ${stateName}.`);
+    }
+
+    const eventContent = `abstract class ${pascalBase}Event {
+  const ${pascalBase}Event();
+}
+
+class ${pascalBase}Started extends ${pascalBase}Event {
+  const ${pascalBase}Started();
+}
+`;
+
+    const stateContent = `class ${pascalBase}State {
+  const ${pascalBase}State();
+}
+`;
+
+    const blocContent = `// Requires: bloc (or flutter_bloc) in pubspec.yaml
+import 'package:bloc/bloc.dart';
+import '${stateName}_event.dart';
+import '${stateName}_state.dart';
+
+class ${pascalBase}Bloc extends Bloc<${pascalBase}Event, ${pascalBase}State> {
+  ${pascalBase}Bloc() : super(const ${pascalBase}State()) {
+    on<${pascalBase}Started>((event, emit) {
+      // TODO: handle event
+    });
+  }
+}
+`;
+
+    await fs.writeFile(eventPath, eventContent);
+    await fs.writeFile(statePath, stateContent);
+    await fs.writeFile(blocPath, blocContent);
+
+    await upsertBarrelExport(barrelPath, `export 'state/${stateName}_bloc.dart';`);
+    await upsertBarrelExport(barrelPath, `export 'state/${stateName}_event.dart';`);
+    await upsertBarrelExport(barrelPath, `export 'state/${stateName}_state.dart';`);
+}
+
+function insertAfterLastPartImport(content: string, importLine: string) {
+    const lines = content.split('\n');
+    let lastPartImportIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes("import 'parts/")) {
+            lastPartImportIndex = i;
+        }
+    }
+    if (lastPartImportIndex >= 0) {
+        lines.splice(lastPartImportIndex + 1, 0, importLine);
+        return lines.join('\n');
+    }
+    return `${importLine}\n${content}`;
+}
+
+function getNextLetter(existing: string[]) {
+    if (existing.length === 0) return 'a';
+    const sorted = existing.map(letter => letter.charCodeAt(0)).sort((a, b) => a - b);
+    const last = sorted[sorted.length - 1];
+    const next = last + 1;
+    if (next > 'z'.charCodeAt(0)) return 'z';
+    return String.fromCharCode(next);
+}
+
+async function wireGoRouter(options: {
+    routePath: string;
+    routeConstName: string;
+    screenClass: string;
+    featureName: string;
+    screenName: string;
+    routeKind: 'public' | 'auth' | 'admin';
+    placement: 'shell' | 'root' | 'admin';
+    useNamedRoutes: boolean;
+}) {
+    const libDir = path.join(process.cwd(), 'lib');
+    if (!await fs.pathExists(libDir)) return false;
+
+    const appRouterPath = await findFileByName(libDir, 'app_router.dart');
+    const routeNamesPath = await findFileByName(libDir, 'route_names.dart');
+
+    if (!appRouterPath || !routeNamesPath) return false;
+
+    await upsertRouteName(routeNamesPath, options.routeConstName, options.routePath, options.routeKind);
+    await upsertGoRoute(appRouterPath, {
+        routeConstName: options.routeConstName,
+        screenClass: options.screenClass,
+        featureName: options.featureName,
+        screenName: options.screenName,
+        routeKind: options.routeKind,
+        placement: options.placement,
+        useNamedRoutes: options.useNamedRoutes
+    });
+
+    return true;
+}
+
+async function upsertRouteName(routeNamesPath: string, constName: string, routePath: string, routeKind: 'public' | 'auth' | 'admin') {
+    let content = await fs.readFile(routeNamesPath, 'utf-8');
+    if (content.includes(`static const String ${constName} =`)) return;
+
+    const insertion = `  static const String ${constName} = '${routePath}';\n`;
+    const adminMarker = '// ── Admin Routes';
+    if (content.includes(adminMarker)) {
+        if (routeKind === 'admin') {
+            content = content.replace(adminMarker, `${adminMarker}\n${insertion}`);
+        } else {
+            content = content.replace(adminMarker, `${insertion}\n${adminMarker}`);
+        }
+    } else {
+        const closingIndex = content.lastIndexOf('}');
+        if (closingIndex > -1) {
+            content = content.slice(0, closingIndex) + `\n${insertion}` + content.slice(closingIndex);
+        }
+    }
+
+    await fs.writeFile(routeNamesPath, content);
+}
+
+async function upsertGoRoute(appRouterPath: string, options: {
+    routeConstName: string;
+    screenClass: string;
+    featureName: string;
+    screenName: string;
+    routeKind: 'public' | 'auth' | 'admin';
+    placement: 'shell' | 'root' | 'admin';
+    useNamedRoutes: boolean;
+}) {
+    let content = await fs.readFile(appRouterPath, 'utf-8');
+
+    const screenFilePath = path.join(process.cwd(), 'lib', 'features', options.featureName, 'presentation', `${options.screenName}_screen.dart`);
+    const appRouterDir = path.dirname(appRouterPath);
+    let relativeImport = path.relative(appRouterDir, screenFilePath).replace(/\\/g, '/');
+    if (!relativeImport.startsWith('.')) relativeImport = `./${relativeImport}`;
+    relativeImport = relativeImport.replace(/^\.\//, '');
+
+    const importLine = `import '${relativeImport}';`;
+    if (!content.includes(importLine)) {
+        const screensMarker = '// Screens';
+        if (content.includes(screensMarker)) {
+            content = content.replace(screensMarker, `${screensMarker}\n${importLine}`);
+        } else {
+            const importEndIndex = content.lastIndexOf("import '");
+            if (importEndIndex !== -1) {
+                const nextLineBreak = content.indexOf('\n', importEndIndex);
+                content = content.slice(0, nextLineBreak + 1) + `${importLine}\n` + content.slice(nextLineBreak + 1);
+            } else {
+                content = `${importLine}\n${content}`;
+            }
+        }
+    }
+
+    const usesAuthGuard = content.includes('AuthGuard.redirect');
+    const usesAdminGuard = content.includes('AdminGuard.redirect');
+    const authGuardPath = await findFileByName(path.join(process.cwd(), 'lib'), 'auth_guard.dart');
+    const adminGuardPath = await findFileByName(path.join(process.cwd(), 'lib'), 'admin_guard.dart');
+
+    if (options.routeKind === 'auth' && authGuardPath && !content.includes('auth_guard.dart')) {
+        let authRelative = path.relative(appRouterDir, authGuardPath).replace(/\\/g, '/');
+        if (!authRelative.startsWith('.')) authRelative = `./${authRelative}`;
+        authRelative = authRelative.replace(/^\.\//, '');
+        const authImport = `import '${authRelative}';`;
+        content = authImport + '\n' + content;
+    }
+
+    if (options.routeKind === 'admin' && adminGuardPath && !content.includes('admin_guard.dart')) {
+        let adminRelative = path.relative(appRouterDir, adminGuardPath).replace(/\\/g, '/');
+        if (!adminRelative.startsWith('.')) adminRelative = `./${adminRelative}`;
+        adminRelative = adminRelative.replace(/^\.\//, '');
+        const adminImport = `import '${adminRelative}';`;
+        content = adminImport + '\n' + content;
+    }
+
+    const redirectLine = options.routeKind === 'auth' && (usesAuthGuard || content.includes('AuthGuard'))
+        ? `              redirect: AuthGuard.redirect,\n`
+        : options.routeKind === 'admin' && (usesAdminGuard || content.includes('AdminGuard'))
+            ? `              redirect: AdminGuard.redirect,\n`
+            : '';
+
+    const nameLine = options.useNamedRoutes ? `              name: RouteNames.${options.routeConstName},\n` : '';
+
+    const pathLine = options.routeKind === 'admin'
+        ? `              path: '\${RouteNames.admin}/\${RouteNames.${options.routeConstName}}',\n`
+        : `              path: RouteNames.${options.routeConstName},\n`;
+
+    const routeSnippet = `            GoRoute(
+${pathLine}${nameLine}              builder: (context, state) => const ${options.screenClass}(),
+${redirectLine}            ),
+`;
+
+    const alreadyAdded = content.includes(`RouteNames.${options.routeConstName}`);
+    if (!alreadyAdded) {
+        if (options.placement === 'admin') {
+            const adminSectionIndex = content.indexOf('Admin Section');
+            const adminShellIndex = adminSectionIndex >= 0 ? content.indexOf('ShellRoute', adminSectionIndex) : -1;
+            const routesIndex = adminShellIndex >= 0 ? content.indexOf('routes: [', adminShellIndex) : -1;
+            if (routesIndex !== -1) {
+                const insertPos = routesIndex + 'routes: ['.length;
+                content = content.slice(0, insertPos) + `\n${routeSnippet}` + content.slice(insertPos);
+            }
+        } else if (options.placement === 'shell' && content.includes('ShellRoute')) {
+            const shellIndex = content.indexOf('ShellRoute');
+            const routesIndex = content.indexOf('routes: [', shellIndex);
+            if (routesIndex !== -1) {
+                const insertPos = routesIndex + 'routes: ['.length;
+                content = content.slice(0, insertPos) + `\n${routeSnippet}` + content.slice(insertPos);
+            }
+        } else {
+            const routesIndex = content.indexOf('routes: [');
+            if (routesIndex !== -1) {
+                const insertPos = routesIndex + 'routes: ['.length;
+                content = content.slice(0, insertPos) + `\n${routeSnippet}` + content.slice(insertPos);
+            }
+        }
+    }
+
+    await fs.writeFile(appRouterPath, content);
+}
+
+async function findFileByName(rootDir: string, fileName: string, depth = 4): Promise<string | null> {
+    if (depth < 0) return null;
+    const entries = await fs.readdir(rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+        const fullPath = path.join(rootDir, entry.name);
+        if (entry.isFile() && entry.name === fileName) {
+            return fullPath;
+        }
+        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'build') {
+            const found = await findFileByName(fullPath, fileName, depth - 1);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+async function runShadcnCommand(shadcnArgs: string[]) {
+    const { pm } = await inquirer.prompt([{
+        type: 'list',
+        name: 'pm',
+        message: 'Package manager to run shadcn:',
+        choices: [
+            { name: 'pnpm (dlx)', value: 'pnpm' },
+            { name: 'npm (npx)', value: 'npm' },
+            { name: 'yarn (dlx)', value: 'yarn' },
+            { name: 'bun (bunx)', value: 'bun' }
+        ],
+        default: 'pnpm'
+    }]);
+
+    let command = 'npx';
+    let args: string[] = [];
+
+    if (pm === 'pnpm') {
+        command = 'pnpm';
+        args = ['dlx', 'shadcn@latest', ...shadcnArgs];
+    } else if (pm === 'yarn') {
+        command = 'yarn';
+        args = ['dlx', 'shadcn@latest', ...shadcnArgs];
+    } else if (pm === 'bun') {
+        command = 'bunx';
+        args = ['shadcn@latest', ...shadcnArgs];
+    } else {
+        command = 'npx';
+        args = ['shadcn@latest', ...shadcnArgs];
+    }
+
+    await runCommand(command, args);
+}
+
+async function runCommand(command: string, args: string[]) {
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn(command, args, { stdio: 'inherit', shell: true, cwd: process.cwd() });
+        child.on('close', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`${command} ${args.join(' ')} failed with code ${code}`));
+        });
+    });
 }
 
 async function updateImports(oldName: string, newName: string) {

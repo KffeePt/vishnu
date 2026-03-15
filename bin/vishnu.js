@@ -9,11 +9,13 @@ const projectRoot = path.join(__dirname, '..');
 // Launch the TUI using npx tsx (safer for Windows/Global)
 const cliPath = path.join(projectRoot, 'codeman', 'interactive-cli.ts');
 
-const child = spawn('npx', ['tsx', cliPath], {
+const args = process.argv.slice(2);
+
+const child = spawn('npx', ['tsx', cliPath, ...args], {
     stdio: 'inherit',
     cwd: process.cwd(),
     shell: true, // Required for npx on Windows
-    env: { ...process.env, VISHNU_ROOT: projectRoot }
+    env: { ...process.env, VISHNU_ROOT: projectRoot, CODEMAN_FORCE_LAUNCHER: 'true' }
 });
 
 child.on('exit', (code) => {

@@ -8,11 +8,13 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'codeman.json');
 interface UserConfig {
     version: string;
     lastAuthTimestamp?: number;
+    cachedUser?: any;
 }
 
 const DEFAULT_CONFIG: UserConfig = {
     version: '2.0',
-    lastAuthTimestamp: 0
+    lastAuthTimestamp: 0,
+    cachedUser: null
 };
 
 export const UserConfigManager = {
@@ -42,9 +44,12 @@ export const UserConfigManager = {
         return config.version;
     },
 
-    setLastAuth: (timestamp: number) => {
+    setLastAuth: (timestamp: number, user?: any) => {
         const config = UserConfigManager.ensureConfig();
         config.lastAuthTimestamp = timestamp;
+        if (user) {
+            config.cachedUser = user;
+        }
         try {
             fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
         } catch (e) {
@@ -55,5 +60,10 @@ export const UserConfigManager = {
     getLastAuth: (): number => {
         const config = UserConfigManager.ensureConfig();
         return config.lastAuthTimestamp || 0;
+    },
+
+    getCachedUser: (): any | null => {
+        const config = UserConfigManager.ensureConfig();
+        return config.cachedUser || null;
     }
 };

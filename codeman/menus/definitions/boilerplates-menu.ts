@@ -17,6 +17,7 @@ export const getBoilerplateOptions = async (state: GlobalState): Promise<MenuOpt
             { label: '---', value: 'sep2', type: 'separator' },
             { label: '🚀 Full Stack Feature', value: 'full-stack', action: { type: 'script', handler: 'create-full-stack' } },
             { label: '📦 Add SaaS Package...', value: 'add-package', action: { type: 'script', handler: 'add-package' } },
+            { label: '🧩 Shadcn Registry Manager', value: 'shadcn-registry', action: { type: 'script', handler: 'manage-shadcn' } },
             { label: '🔒 Admin Generators...', value: 'admin-menu', action: { type: 'navigate', target: 'admin-gen' } }, // TODO: Migrate Admin Menu
             { label: '🔧 Refactor Component', value: 'refactor-comp', action: { type: 'script', handler: 'refactor-comp' } },
             { label: '---', value: 'sep3', type: 'separator' },
@@ -24,9 +25,11 @@ export const getBoilerplateOptions = async (state: GlobalState): Promise<MenuOpt
         );
     } else if (projectType === 'flutter') {
         options.push(
-            { label: '✨ Flutter Widget', value: 'flutter-widget', disabled: true, description: 'Not implemented' },
-            { label: '📄 Screen / Page', value: 'flutter-screen', disabled: true, description: 'Not implemented' },
-            { label: '📦 Bloc / Cubit', value: 'flutter-bloc', disabled: true, description: 'Not implemented' },
+            { label: '✨ Flutter Widget', value: 'flutter-widget', action: { type: 'script', handler: 'create-flutter-widget' } },
+            { label: '🧩 Flutter Widget Part', value: 'flutter-widget-part', action: { type: 'script', handler: 'create-flutter-widget-part' } },
+            { label: '📄 Screen / Page', value: 'flutter-screen', action: { type: 'script', handler: 'create-flutter-screen' } },
+            { label: '🚀 Flutter Feature (Screen + State + Route)', value: 'flutter-feature', action: { type: 'script', handler: 'create-flutter-feature' } },
+            { label: '📦 Bloc / Cubit', value: 'flutter-bloc', action: { type: 'script', handler: 'create-flutter-state' } },
             { label: '---', value: 'sep1', type: 'separator' },
             { label: '🗑️  Delete Asset...', value: 'delete-menu', action: { type: 'navigate', target: 'delete-assets' } }
         );

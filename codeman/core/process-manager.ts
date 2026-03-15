@@ -11,7 +11,11 @@ export class ProcessManager {
      * Uses the `cmd /c start "Title" cmd /c ...` pattern to ensure the window closes when the process ends.
      */
     static async spawnDetachedWindow(title: string, command: string, cwd: string = process.cwd()) {
-        const child = spawn('cmd.exe', ['/c', 'start', `"${title}"`, 'cmd', '/c', command], {
+        // We add "& pause" to the command to ensure the window stays open on exit/error
+        // The quotes around ${command} & pause are critical for cmd /c interpretation
+        // We also add echo statements to make it clear when the command has finished
+        const shellCommand = `"${command} & echo. & echo === COMMAND COMPLETED === & echo Press any key to close this window... & pause > nul"`;
+        const child = spawn('cmd.exe', ['/c', 'start', `"${title}"`, 'cmd', '/c', shellCommand], {
             cwd,
             shell: true,
             stdio: 'ignore',
@@ -28,7 +32,7 @@ export class ProcessManager {
         // We use PowerShell's Start-Process with -Verb RunAs to request elevation.
         // The argument list for cmd.exe needs to set the title, change directory, and run the command.
         // We add an echo/pause to let the user see the result before the window closes.
-        const cmdArgs = `'/c', 'TITLE "${title}" ^& cd /d "${cwd}" ^& echo Executing elevated command... ^& ${command} ^& echo. ^& echo Process complete. ^& pause'`;
+        const cmdArgs = `'/c', 'TITLE "${title}" ^& cd /d "${cwd}" ^& echo Executing elevated command... ^& ${command} ^& echo. ^& echo === COMMAND COMPLETED === ^& echo Press any key to close this window... ^& pause > nul'`;
         
         const psCommand = `Start-Process cmd -ArgumentList ${cmdArgs} -Verb RunAs`;
         

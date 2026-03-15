@@ -18,6 +18,13 @@ const openBrowser = async (url: string) => {
     }
 };
 
+export interface AuthOptions {
+    serviceAccount?: string;
+    projectId?: string;
+    apiKey?: string;
+    authDomain?: string;
+}
+
 export class AuthService {
     private static server: http.Server | null = null;
     private static PORT = 3005;
@@ -50,9 +57,22 @@ export class AuthService {
         });
     }
 
-    static async login(state: GlobalState): Promise<boolean> {
-        // Reload Env Vars to catch any manual changes
+    static async login(state: GlobalState, options: AuthOptions = {}): Promise<boolean> {
+        // Fast-path session restore
+        const lastAuth = UserConfigManager.getLastAuth();
+        const cachedUser = UserConfigManager.getCachedUser();
+        const TEN_MINUTES = 10 * 60 * 1000;
+        
+        // If we are overriding project, we skip cache for now to ensure we auth against the right project
+        if (!options.projectId && lastAuth && cachedUser && (Date.now() - lastAuth < TEN_MINUTES)) {
+            console.log(chalk.green('\n✅ Session restored from recent authentication.'));
+            state.setUser(cachedUser);
+            // Refresh timestamp
+            UserConfigManager.setLastAuth(Date.now(), cachedUser);
+            return true;
+        }
 
+        // Reload Env Vars to catch any manual changes
         const { createRequire } = await import('module');
         const require = createRequire(import.meta.url);
         require('dotenv').config({ override: true });
@@ -65,12 +85,19 @@ export class AuthService {
         // Pre-emptive port cleanup
         await this.killPort(this.PORT);
 
-        // 1. Initialize Admin SDK if needed
+        // 1. Initialize Admin SDK if needed (or if we are switching projects)
+        const targetProjectId = options.projectId || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+
+        if (admin.apps.length > 0 && admin.app().options.projectId !== targetProjectId) {
+            // Delete existing app to re-initialize with different credentials if project mismatch
+            await admin.app().delete();
+        }
+
         if (admin.apps.length === 0) {
             try {
-                // Try ENV first
-                const serviceAccount = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-                const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+                // Try Options first, then ENV
+                const serviceAccount = options.serviceAccount || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+                const projectId = targetProjectId;
 
                 // Explicit Env Vars (Common in Vercel/CI)
                 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -122,7 +149,7 @@ export class AuthService {
             }
         }
 
-        const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'unknown-project';
+        const projectId = targetProjectId || 'unknown-project';
 
         return new Promise((resolve) => {
             // 2. Start Local Server to catch token
@@ -183,12 +210,13 @@ export class AuthService {
                                 }
 
                                 if (userRole) {
-                                    state.setUser({
+                                    const sessionUser = {
                                         email: email || 'unknown',
                                         uid: decodedToken.uid,
                                         isAdmin: userRole === 'admin' || userRole === 'owner',
                                         role: userRole as any
-                                    });
+                                    };
+                                    state.setUser(sessionUser);
 
                                     res.writeHead(200, {
                                         'Content-Type': 'application/json',
@@ -197,8 +225,8 @@ export class AuthService {
                                     res.end(JSON.stringify({ success: true, email }));
 
                                     console.log(`✅ Welcome, ${email}`);
-                                    // Save Auth Timestamp
-                                    UserConfigManager.setLastAuth(Date.now());
+                                    // Save Auth Timestamp & cache user
+                                    UserConfigManager.setLastAuth(Date.now(), sessionUser);
 
                                     this.closeServer();
                                     resolve(true);
@@ -238,8 +266,8 @@ export class AuthService {
                 if (parsedUrl.pathname === '/') {
                     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                     const clientEnv = {
-                        apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY,
-                        authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`,
+                        apiKey: options.apiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY,
+                        authDomain: options.authDomain || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`,
                         projectId: projectId,
                     };
 

@@ -16,6 +16,11 @@ export const MaintDeployMenuDef: MenuDefinition = {
             action: { type: 'script', handler: 'maintDeployRelease' }
         },
         {
+            label: '🏗️  TUI & Dashboard Deploy Prep (Local)',
+            value: 'maint-deploy-prep',
+            action: { type: 'script', handler: 'maintDeployPrep' }
+        },
+        {
             label: '🔒 Deploy Rules (Firestore/Storage/RTDB)',
             value: 'deploy-rules',
             action: { type: 'script', handler: 'maintDeployRules' }

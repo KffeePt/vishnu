@@ -7,23 +7,17 @@ export const MaintenanceMenuDef: MenuDefinition = {
     type: 'dynamic',
     options: async (state: GlobalState) => {
         const user = state.user;
-        const role = user?.role || 'staff';
+        const isAdmin = user?.isAdmin || false;
         
-        // In local CLI context, deployment should be available to the developer 
-        // regardless of Firebase Auth state, unless explicitly restricted.
-        const canDeploy = true; 
-        const canManageBranches = true;
-
         const opts: MenuOption[] = [];
 
-        if (canDeploy) {
-            opts.push({ label: '--- CI/CD (Admin) ---', value: 'sep1', type: 'separator' });
-            opts.push({
-                label: '🚀 Deployment Options',
-                value: 'maint-deploy',
-                action: { type: 'navigate', target: 'maint-deploy-menu' }
-            });
-        }
+        opts.push({ label: '--- CI/CD (Admin Only) ---', value: 'sep1', type: 'separator' });
+        opts.push({
+            label: '🚀 Deployment Options',
+            value: 'maint-deploy',
+            action: { type: 'navigate', target: 'maint-deploy-menu' }
+        });
+        
 
 
         opts.push({ label: '--- Local Tasks ---', value: 'sep_local', type: 'separator' });
@@ -44,14 +38,13 @@ export const MaintenanceMenuDef: MenuDefinition = {
         });
 
 
-        if (canManageBranches) {
-            opts.push({ label: '--- Branching (Maintainer) ---', value: 'sep2', type: 'separator' });
-            opts.push({
-                label: '🌿 Branch Management',
-                value: 'branching-menu',
-                action: { type: 'navigate', target: 'branching-menu' }
-            });
-        }
+        opts.push({ label: '--- Branching (Maintainer) ---', value: 'sep2', type: 'separator' });
+        opts.push({
+            label: '🌿 Branch Management',
+            value: 'branching-menu',
+            action: { type: 'navigate', target: 'branching-menu' }
+        });
+        
 
         opts.push({ label: '--- Auth / Settings ---', value: 'sep3', type: 'separator' });
         opts.push({

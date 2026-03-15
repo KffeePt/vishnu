@@ -7,12 +7,10 @@ import { spawn } from 'child_process';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { io } from './io';
-
-// Handlers Registry for 'script' actions
-const scriptHandlers: Record<string, (args?: any) => Promise<string | void>> = {};
+import { registry } from './registry';
 
 export function registerScript(name: string, handler: (args?: any) => Promise<string | void>) {
-    scriptHandlers[name] = handler;
+    registry.registerScript(name, handler);
 }
 
 export function createSchemaMenu(def: MenuDefinition): MenuNode {
@@ -104,12 +102,13 @@ export function createSchemaMenu(def: MenuDefinition): MenuNode {
 
                 if (action.type === 'script') {
                     let nextTarget: string | void | undefined = undefined;
-                    if (action.handler && scriptHandlers[action.handler]) {
+                    const handler = action.handler ? registry.getScript(action.handler) : undefined;
+                    if (handler) {
                         // Await the handler, which might return a navigation target (e.g. 'ROOT')
                         io.disableAlternateScreen();
                         io.disableMouse();
                         try {
-                            nextTarget = ((await scriptHandlers[action.handler](action.args)) as unknown) as string | void;
+                            nextTarget = ((await handler(action.args)) as unknown) as string | void;
                         } finally {
                             // Re-initialize IO to reattach stdin handlers after inquirer/other libs may have disrupted them
                             io.start();

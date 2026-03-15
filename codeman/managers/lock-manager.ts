@@ -46,16 +46,14 @@ export class LockManager {
             // Check if old process is running
             try {
                 process.kill(oldPid, 0); // Throws if not running (or no permission)
-                console.log(chalk.red(`[LOCK] Key '${key}' is locked by PID ${oldPid}.`));
+                
+                // Process is still running. We must abort gracefully.
+                console.log(chalk.red(`[LOCK] Action is already running (PID ${oldPid}).`));
+                console.log(chalk.yellow(`Please wait for it to finish or close the other terminal window.`));
+                
+                // We return false so the caller (e.g. BuildManager) aborts safely.
+                return false;
 
-                // For now, in TypeScript, we'll just fail rather than aggressive killing unless forced.
-                // Or we can try to kill it like the PS1 script did.
-                console.log(chalk.yellow(`Attempting to kill stale process ${oldPid}...`));
-                try {
-                    process.kill(oldPid, 'SIGTERM');
-                } catch (e) { /* ignore */ }
-
-                await new Promise(r => setTimeout(r, 1000));
             } catch (e) {
                 // Not running, safe to overwrite
                 console.log(chalk.gray(`[LOCK] Stale lock found for '${key}' (PID ${oldPid}). Overwriting.`));
