@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { state } from '../core/state';
+import { AuthTokenStore } from '../core/auth/token-store';
 
 const API_BASE = 'http://localhost:3000/api/v1'; // Could be env var
 
@@ -21,9 +22,12 @@ export class JobsManager {
         // to testing/stubs, or warn the user.
         // For a production app, the frontend holds the token. 
         // We'll mimic sending a Bearer token by looking it up if we had saved it.
-        const token = state.rawIdToken || 'MOCK_TOKEN'; // Needs implementation in auth.ts
-        if (token === 'MOCK_TOKEN') {
-           console.log(chalk.yellow('\n⚠️ Warning: No valid raw ID token found. API request may fail Auth.\n'));
+        const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY;
+        const storedToken = await AuthTokenStore.getValidIdToken(apiKey);
+        const token = storedToken || state.rawIdToken;
+        if (!token) {
+            console.log(chalk.red('\n🚫 No valid ID token found. Please run vishnu login.\n'));
+            return null;
         }
 
         return {

@@ -18,7 +18,7 @@ export const AuthMenu: MenuNode = {
             console.log('\n');
 
             const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'Unknown Project';
-            const email = process.env.OWNER_EMAIL || process.env.FIREBASE_CLIENT_EMAIL || 'Unknown Email';
+            const email = process.env.FIREBASE_CLIENT_EMAIL || 'Unknown Email';
 
             console.log(chalk.cyan(`   Project: ${projectId}`));
             console.log(chalk.cyan(`   Account: ${email}`));

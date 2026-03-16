@@ -67,6 +67,59 @@ export class SessionLoader {
                 Logger.log(`SessionLoader: Detected Custom`);
             }
 
+            // 5b. Build Project Intelligence (framework, Firebase, App Check, Vercel, DB schema)
+            Logger.log(`SessionLoader: Building Project Intelligence`);
+            const { buildProjectIntelligence } = await import('../core/intelligence/project-intelligence');
+            const intelligence = buildProjectIntelligence(projectPath);
+            state.project.intelligence = intelligence;
+            state.project.database = intelligence.database;
+            if (!state.project.id && intelligence.firebase.projectId) {
+                state.project.id = intelligence.firebase.projectId;
+            }
+
+            const appCheck = intelligence.firebase.appCheck;
+            const gatewayRequired = appCheck.enabled === true;
+            const mode = intelligence.vercel.detected ? 'vercel' : (gatewayRequired ? 'gateway' : 'direct');
+
+            state.project.security = {
+                appCheck,
+                gatewayRequired,
+                mode
+            };
+
+            state.project.deployment = {
+                platform: intelligence.vercel.detected ? 'vercel' : (intelligence.firebase.detected ? 'firebase' : 'unknown'),
+                signals: intelligence.vercel.signals
+            };
+
+            if (intelligence.firebase.detected) {
+                console.log(chalk.green('   ✔ Firebase detected'));
+            }
+
+            if (appCheck.enabled) {
+                console.log(chalk.yellow('   ✔ App Check enabled'));
+                console.log(chalk.yellow('   ✔ Gateway mode required'));
+            } else if (intelligence.firebase.detected) {
+                console.log(chalk.gray('   ✔ App Check not detected'));
+            }
+
+            if (intelligence.vercel.detected) {
+                console.log(chalk.cyan('   ✔ Vercel deployment detected'));
+            }
+
+            // Enforce env migration prompt on entry if format is not correct
+            const { runEnvMigrationPrompt } = await import('../core/project/env-migration');
+            await runEnvMigrationPrompt(projectPath);
+
+            if (appCheck.enabled) {
+                const { DebugTokenManager } = await import('../core/security/debug-token-manager');
+                await DebugTokenManager.runDevWorkflow({
+                    projectPath,
+                    framework: intelligence.framework.kind,
+                    intelligence
+                });
+            }
+
             // 6. Auth & Context Checks
             // This might verify Firebase, Setup, etc.
 
@@ -77,7 +130,17 @@ export class SessionLoader {
 
             console.log(chalk.gray('   Verifying Authentication...'));
             Logger.log(`SessionLoader: Verifying Authentication`);
-            await checkAndSetupAuth(projectPath);
+            const authOk = await checkAndSetupAuth(projectPath);
+            if (!authOk) {
+                console.log(chalk.red('   Auth failed. Project access blocked.'));
+                Logger.error(`SessionLoader: Auth failed, clearing project context.`);
+                state.project.rootPath = '';
+                state.setProjectType('unknown');
+                state.user = undefined;
+                state.authBypass = false;
+                state.rawIdToken = undefined;
+                return false;
+            }
             console.log(chalk.gray('   Auth Check Complete.'));
             Logger.log(`SessionLoader: Auth Check Complete, Session Loaded.`);
 

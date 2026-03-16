@@ -285,6 +285,7 @@ export const verifyAuthentication = functions.https.onRequest((req, res) => {
 export * from './auth-sync';
 export * from './github-proxy';
 export * from './github-webhook';
+export * from './vishnu-gateway';
 
 // --- Payments ---
 export { paymentWebhook, createPayment, createSubscription } from './payments/webhook-handler';
@@ -295,4 +296,3 @@ export { createSupportThread, sendSupportMessage, onSupportMessageCreate } from 
 // --- Subscriptions ---
 export { cancelSubscription, pauseSubscription, reactivateSubscription } from './subscriptions/manager';
 export { checkBillingStatus } from './subscriptions/billing-sync';
-

@@ -54,6 +54,8 @@ async function baseCreateProject(type: 'nextjs' | 'flutter' | 'python' | 'cpp') 
             await createNextJs(projectPath);
         } else if (type === 'flutter') {
             await createFlutter(projectPath);
+            const { setupFlutterBranding } = await import('../utils/flutter-branding');
+            await setupFlutterBranding(projectPath);
         } else {
             // Basic scaffolding for Python/CPP
             await fs.mkdirp(projectPath);
@@ -113,7 +115,16 @@ async function baseCreateProject(type: 'nextjs' | 'flutter' | 'python' | 'cpp') 
 
             // Trigger Auth Setup Automatically
             const { checkAndSetupAuth } = await import('../core/auth-helper');
-            await checkAndSetupAuth(projectPath);
+            const ok = await checkAndSetupAuth(projectPath);
+            if (!ok) {
+                console.log(chalk.red('\n🚫 Auth failed. Project access blocked.'));
+                state.project.rootPath = '';
+                state.setProjectType('unknown');
+                state.user = undefined;
+                state.authBypass = false;
+                state.rawIdToken = undefined;
+                return;
+            }
         }
 
     } catch (e: any) {

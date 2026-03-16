@@ -1,7 +1,51 @@
+export interface AppCheckDetection {
+    enabled: boolean;
+    signals: string[];
+}
+
+export interface ProjectSecurity {
+    appCheck: AppCheckDetection;
+    gatewayRequired: boolean;
+    mode: 'direct' | 'gateway' | 'vercel';
+}
+
+export interface ProjectDeployment {
+    platform: 'firebase' | 'vercel' | 'unknown';
+    signals: string[];
+}
+
+export interface ProjectDatabase {
+    kinds: string[];
+    artifacts: string[];
+}
+
+export interface ProjectIntelligence {
+    framework: {
+        kind: 'nextjs' | 'flutter' | 'custom' | 'unknown';
+        signals: string[];
+        details?: Record<string, string | boolean | number>;
+    };
+    firebase: {
+        detected: boolean;
+        projectId?: string;
+        signals: string[];
+        appCheck: AppCheckDetection;
+    };
+    vercel: {
+        detected: boolean;
+        signals: string[];
+    };
+    database: ProjectDatabase;
+}
+
 export interface ProjectConfig {
     type: 'nextjs' | 'flutter' | 'python' | 'cpp' | 'custom' | 'unknown';
     rootPath: string;
     id?: string;
+    security?: ProjectSecurity;
+    deployment?: ProjectDeployment;
+    intelligence?: ProjectIntelligence;
+    database?: ProjectDatabase;
 }
 
 export interface AgentMemory {
@@ -31,6 +75,7 @@ export class GlobalState {
     public restartTargetNode?: string; // Where to land after a restart (e.g. 'ROOT' or 'AUTH')
     public shouldRestart: boolean = false;
     public rawIdToken?: string;
+    public authBypass?: boolean;
 
     public user?: {
         email: string;

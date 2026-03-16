@@ -83,7 +83,11 @@ C8888     d888 888b d888 888 d88 88b     e Y8b Y8b   "8" 888 888 88b
         contextLine += `${chalk.dim('User:')} ${userColor(userEmail)}`;
 
         if (contextLine) {
-            return coloredArt + '\n    ' + contextLine.trim() + '\n';
+            let bannerLine = '';
+            if (state.authBypass) {
+                bannerLine = chalk.yellow('    ⚠️  Auth Bypass Enabled (Vishnu Owner)');
+            }
+            return coloredArt + '\n    ' + contextLine.trim() + '\n' + (bannerLine ? bannerLine + '\n' : '');
         }
     }
 

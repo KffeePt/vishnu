@@ -242,15 +242,13 @@ registerScript('useCurrentFolder', async () => {
     const { SessionLoader } = await import('../managers/session-loader');
     const success = await SessionLoader.load(process.cwd());
     if (success) {
-        // Trigger Auth Check
-        const { checkAndSetupAuth } = await import('../core/auth-helper');
-        await checkAndSetupAuth(process.cwd());
-
         return 'ROOT';
     }
+    return 'ROOT';
 });
 
 registerScript('closeProject', async () => {
+    state.project.rootPath = '';
     state.setProjectType('unknown');
 });
 
@@ -265,7 +263,15 @@ registerScript('restartSession', async () => {
     if (state.project.rootPath) {
         // Re-run critical setup checks
         const { checkAndSetupAuth } = await import('../core/auth-helper');
-        await checkAndSetupAuth(state.project.rootPath);
+        const ok = await checkAndSetupAuth(state.project.rootPath);
+        if (!ok) {
+            state.project.rootPath = '';
+            state.setProjectType('unknown');
+            state.user = undefined;
+            state.authBypass = false;
+            state.rawIdToken = undefined;
+            return 'ROOT';
+        }
     }
     return 'ROOT';
 });
@@ -311,10 +317,6 @@ registerScript('openProject', async () => {
             const { SessionLoader } = await import('../managers/session-loader');
             const success = await SessionLoader.load(newPath);
             if (success) {
-                // Trigger Auth Check
-                const { checkAndSetupAuth } = await import('../core/auth-helper');
-                await checkAndSetupAuth(newPath);
-
                 return 'ROOT';
             }
         }
@@ -430,6 +432,13 @@ registerScript('create-flutter-state', async () => {
 registerScript('run-dev-server', async () => {
     const { runDevServer } = await import('../commands/dev-server');
     await runDevServer();
+    return 'dev-dojo';
+});
+
+registerScript('setup-flutter-branding', async () => {
+    const { setupFlutterBranding } = await import('../utils/flutter-branding');
+    const { state } = await import('../core/state');
+    await setupFlutterBranding(state.project.rootPath);
     return 'dev-dojo';
 });
 

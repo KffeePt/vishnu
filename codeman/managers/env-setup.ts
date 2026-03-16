@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
 import { state } from '../core/state';
+import { buildEnvTemplate, mergeEnvValues } from '../core/project/env-template';
 
 export class EnvSetupManager {
     static async verifyAndSetupEnv(forceValidations = false): Promise<boolean> {
@@ -45,10 +46,6 @@ export class EnvSetupManager {
 
             if (!isFlutterProject) {
                 // These are required for Next.js but optional for Flutter
-                // Check OWNER_EMAIL
-                const emailMatch = envContent.match(/^OWNER_EMAIL=(.+)$/m);
-                if (!emailMatch || !emailMatch[1].trim()) missing.push('OWNER_EMAIL');
-
                 // Check CREDENTIALS or SERVICE ACCOUNT
                 const credsMatch = envContent.match(/^GOOGLE_APPLICATION_CREDENTIALS=(.+)$/m);
                 const saMatch = envContent.match(/^FIREBASE_SERVICE_ACCOUNT=(.+)$/m);
@@ -101,13 +98,7 @@ export class EnvSetupManager {
         // Files found, start interactive setup
         console.log(chalk.blue('\n📝 Configuring Environment...'));
 
-        const { email, geminiKey } = await inquirer.prompt([
-            {
-                type: 'input',
-                name: 'email',
-                message: 'Enter Owner Email:',
-                validate: (input) => input.includes('@') ? true : 'Invalid email'
-            },
+        const { geminiKey } = await inquirer.prompt([
             {
                 type: 'input',
                 name: 'geminiKey',
@@ -133,27 +124,39 @@ export class EnvSetupManager {
         }
 
         // Generate .env
-        const newEnvContent = `
-# Admin Setup
-OWNER_EMAIL=${email}
-GOOGLE_APPLICATION_CREDENTIALS=admin-sdk.json
-
-# Firebase Client
-NEXT_PUBLIC_FIREBASE_API_KEY=${apiKey}
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${authDomain}
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=${projectId}
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${storageBucket}
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${messagingSenderId}
-NEXT_PUBLIC_FIREBASE_APP_ID=${appId}
-NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${measurementId}
-FIREBASE_PROJECT_ID=${projectId}
-
-# AI
-GEMINI_API_KEY=${geminiKey}
-`.trim();
+        const newEnvContent = buildEnvTemplate({
+            GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
+            FIREBASE_API_KEY: apiKey,
+            FIREBASE_AUTH_DOMAIN: authDomain,
+            FIREBASE_PROJECT_ID: projectId,
+            FIREBASE_STORAGE_BUCKET: storageBucket,
+            FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
+            FIREBASE_APP_ID: appId,
+            FIREBASE_MEASUREMENT_ID: measurementId,
+            GEMINI_API_KEY: geminiKey
+        });
 
         fs.writeFileSync(envPath, newEnvContent);
         console.log(chalk.green('✅ .env file generated successfully.'));
+
+        // Generate .env.example (deduplicated template)
+        const envExamplePath = path.join(process.cwd(), '.env.example');
+        const envExampleContent = buildEnvTemplate(
+            mergeEnvValues({}, {
+                GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
+                FIREBASE_API_KEY: apiKey,
+                FIREBASE_AUTH_DOMAIN: authDomain,
+                FIREBASE_PROJECT_ID: projectId,
+                FIREBASE_STORAGE_BUCKET: storageBucket,
+                FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
+                FIREBASE_APP_ID: appId,
+                FIREBASE_MEASUREMENT_ID: measurementId,
+                GEMINI_API_KEY: ''
+            })
+        );
+
+        fs.writeFileSync(envExamplePath, envExampleContent);
+        console.log(chalk.green('✅ .env.example file generated successfully.'));
 
         // Run firebase init ONLY if firebase.json doesn't exist yet
         const firebaseJsonPath = path.join(process.cwd(), 'firebase.json');

@@ -126,13 +126,7 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     // Files found, start interactive setup
     console.log(chalk.blue('\n📝 Configuring Environment...'));
 
-    const { email, geminiKey } = await inquirer.default.prompt([
-      {
-        type: 'input',
-        name: 'email',
-        message: 'Enter Owner Email:',
-        validate: (input) => input.includes('@') ? true : 'Invalid email'
-      },
+    const { geminiKey } = await inquirer.default.prompt([
       {
         type: 'input',
         name: 'geminiKey',
@@ -155,18 +149,16 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     // Generate .env
     const envContent = `
 # Admin Setup
-OWNER_EMAIL=${email}
 GOOGLE_APPLICATION_CREDENTIALS=admin-sdk.json
 
 # Firebase Client
-NEXT_PUBLIC_FIREBASE_API_KEY=${apiKey}
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${authDomain}
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=${projectId}
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${storageBucket}
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${messagingSenderId}
-NEXT_PUBLIC_FIREBASE_APP_ID=${appId}
-NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${measurementId}
+FIREBASE_API_KEY=${apiKey}
+FIREBASE_AUTH_DOMAIN=${authDomain}
 FIREBASE_PROJECT_ID=${projectId}
+FIREBASE_STORAGE_BUCKET=${storageBucket}
+FIREBASE_MESSAGING_SENDER_ID=${messagingSenderId}
+FIREBASE_APP_ID=${appId}
+FIREBASE_MEASUREMENT_ID=${measurementId}
 
 # AI
 GEMINI_API_KEY=${geminiKey}
@@ -203,7 +195,6 @@ GEMINI_API_KEY=${geminiKey}
   const missing = [];
   if (!isFlutterProject) {
     // These are required for Next.js but optional for Flutter
-    if (!process.env.OWNER_EMAIL) missing.push('OWNER_EMAIL');
     if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.FIREBASE_SERVICE_ACCOUNT) missing.push('GOOGLE_APPLICATION_CREDENTIALS');
   }
 

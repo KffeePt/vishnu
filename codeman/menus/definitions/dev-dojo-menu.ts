@@ -11,7 +11,8 @@ export const getDevDojoOptions = async (state: GlobalState): Promise<MenuOption[
     if (projectType === 'flutter') {
         options.push(
             { label: '🛠️  Dev Ops & Runners', value: 'dev-ops-menu', action: { type: 'navigate', target: 'dev-ops-menu' } },
-            { label: '🏗️  Build & Testing', value: 'build-menu', action: { type: 'navigate', target: 'build-menu' } }
+            { label: '🏗️  Build & Testing', value: 'build-menu', action: { type: 'navigate', target: 'build-menu' } },
+            { label: '🎨 Setup App Icon + Splash', value: 'setup-flutter-branding', action: { type: 'script', handler: 'setup-flutter-branding' } }
         );
     }
 

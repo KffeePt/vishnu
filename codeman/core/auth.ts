@@ -8,14 +8,18 @@ import open from 'open';
 import path from 'path';
 import fs from 'fs';
 import chalk from 'chalk';
+import { AuthTokenStore } from './auth/token-store';
+import { inferRoleFromClaims } from './security/role-verifier';
 
 // Helper to open browser
 const openBrowser = async (url: string) => {
     try {
-        await open(url);
+        // Do not wait for the browser process; avoid hanging the CLI
+        void open(url, { wait: false, newInstance: true });
     } catch (err) {
-        console.error('Failed to open browser automatically. Please open:', url);
+        // Fall through to manual instructions below
     }
+    console.log(`🔗 If the browser didn't open, visit: ${url}`);
 };
 
 export interface AuthOptions {
@@ -29,6 +33,7 @@ export class AuthService {
     private static server: http.Server | null = null;
     private static PORT = 3005;
     private static currentNonce: string | null = null;
+    private static LOGIN_TIMEOUT_MS = 2 * 60 * 1000;
 
     private static async killPort(port: number) {
         return new Promise<void>((resolve) => {
@@ -62,15 +67,6 @@ export class AuthService {
         const lastAuth = UserConfigManager.getLastAuth();
         const cachedUser = UserConfigManager.getCachedUser();
         const TEN_MINUTES = 10 * 60 * 1000;
-        
-        // If we are overriding project, we skip cache for now to ensure we auth against the right project
-        if (!options.projectId && lastAuth && cachedUser && (Date.now() - lastAuth < TEN_MINUTES)) {
-            console.log(chalk.green('\n✅ Session restored from recent authentication.'));
-            state.setUser(cachedUser);
-            // Refresh timestamp
-            UserConfigManager.setLastAuth(Date.now(), cachedUser);
-            return true;
-        }
 
         // Reload Env Vars to catch any manual changes
         const { createRequire } = await import('module');
@@ -149,7 +145,69 @@ export class AuthService {
             }
         }
 
+        const apiKey = options.apiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY;
         const projectId = targetProjectId || 'unknown-project';
+
+        const resolveUserRole = async (decodedToken: admin.auth.DecodedIdToken, idToken: string): Promise<string | null> => {
+            const email = decodedToken.email || 'unknown';
+            const verdict = inferRoleFromClaims({ claims: decodedToken as any, email });
+            let userRole = verdict.role;
+
+            // Call verifyAccess Cloud Function to get latest truth
+            try {
+                const functionsBaseUrl = `https://us-central1-${projectId}.cloudfunctions.net`;
+                const cfResp = await fetch(`${functionsBaseUrl}/verifyAccess`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${idToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ data: {} }) // Callable CF format
+                });
+                if (cfResp.ok) {
+                    const cfData = await cfResp.json() as any;
+                    if (cfData.result?.authorized === true && cfData.result?.role) {
+                        userRole = cfData.result.role;
+                    }
+                } else {
+                    console.log(chalk.yellow(`[Auth] verifyAccess CF returned ${cfResp.status}`));
+                }
+            } catch (err) {
+                console.log(chalk.yellow(`[Auth] Failed to call verifyAccess CF: ${(err as Error).message}`));
+            }
+
+            return userRole;
+        };
+
+        // Attempt token restore (and refresh) before opening browser
+        if (!options.projectId) {
+            const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey);
+            if (storedIdToken) {
+                try {
+                    const decodedToken = await admin.auth().verifyIdToken(storedIdToken);
+                    const userRole = await resolveUserRole(decodedToken, storedIdToken);
+
+                    if (userRole) {
+                        const email = decodedToken.email || 'unknown';
+                        const sessionUser = {
+                            email,
+                            uid: decodedToken.uid,
+                            isAdmin: userRole === 'admin' || userRole === 'owner',
+                            role: userRole as any
+                        };
+                        state.setUser(sessionUser);
+                        state.rawIdToken = storedIdToken;
+                        UserConfigManager.setLastAuth(Date.now(), sessionUser);
+                        console.log(chalk.green('\n✅ Session restored from stored token.'));
+                        return true;
+                    }
+                } catch {
+                    // Ignore and fall through to browser login
+                }
+            } else if (lastAuth && cachedUser && (Date.now() - lastAuth < TEN_MINUTES)) {
+                console.log(chalk.yellow('\n⚠️ Cached session found, but no valid token. Re-authentication required.'));
+            }
+        }
 
         return new Promise((resolve) => {
             // 2. Start Local Server to catch token
@@ -161,7 +219,7 @@ export class AuthService {
                     req.on('data', chunk => body += chunk);
                     req.on('end', async () => {
                         try {
-                            const { token: idToken, nonce } = JSON.parse(body);
+                            const { token: idToken, nonce, refreshToken, expiresAt } = JSON.parse(body);
 
                             if (!nonce || nonce !== this.currentNonce) {
                                 res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -177,36 +235,18 @@ export class AuthService {
 
                                 // Check custom claims
                                 console.log('🔎 User Claims:', JSON.stringify(decodedToken, null, 2));
-                                const email = decodedToken.email;
+                                const email = decodedToken.email || 'unknown';
+                                const userRole = await resolveUserRole(decodedToken, idToken);
 
-                                // STRICT CHECK: Must have 'owner' claim or role, OR match the defined OWNER_EMAIL
-                                const ownerEmail = process.env.OWNER_EMAIL;
-                                const isOwner = decodedToken.owner === true || (ownerEmail && email === ownerEmail);
-
-                                let userRole = isOwner ? 'admin' : (decodedToken.role || null);
-
-                                // Call verifyAccess Cloud Function to get latest truth
-                                try {
-                                    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
-                                    const functionsBaseUrl = `https://us-central1-${projectId}.cloudfunctions.net`;
-                                    const cfResp = await fetch(`${functionsBaseUrl}/verifyAccess`, {
-                                        method: 'POST',
-                                        headers: {
-                                            'Authorization': `Bearer ${idToken}`,
-                                            'Content-Type': 'application/json'
-                                        },
-                                        body: JSON.stringify({ data: {} }) // Callable CF format
+                                if (refreshToken) {
+                                    const effectiveExpiresAt = typeof expiresAt === 'number'
+                                        ? expiresAt
+                                        : (decodedToken.exp ? decodedToken.exp * 1000 : Date.now() + 55 * 60 * 1000);
+                                    AuthTokenStore.save({
+                                        firebaseIdToken: idToken,
+                                        refreshToken,
+                                        expiresAt: effectiveExpiresAt
                                     });
-                                    if (cfResp.ok) {
-                                        const cfData = await cfResp.json() as any;
-                                        if (cfData.result && cfData.result.role) {
-                                            userRole = cfData.result.role;
-                                        }
-                                    } else {
-                                        console.log(chalk.yellow(`[Auth] verifyAccess CF returned ${cfResp.status}`));
-                                    }
-                                } catch (err) {
-                                    console.log(chalk.yellow(`[Auth] Failed to call verifyAccess CF: ${(err as Error).message}`));
                                 }
 
                                 if (userRole) {
@@ -217,6 +257,7 @@ export class AuthService {
                                         role: userRole as any
                                     };
                                     state.setUser(sessionUser);
+                                    state.rawIdToken = idToken;
 
                                     res.writeHead(200, {
                                         'Content-Type': 'application/json',
@@ -236,7 +277,7 @@ export class AuthService {
                                     console.log(chalk.white(`User: ${chalk.bold(email)}`));
                                     console.log(chalk.yellow(`Status: Not Authorized (No Role Assigned)`));
                                     console.log(chalk.gray('------------------------------------------------'));
-                                    console.log(chalk.cyan(`To fix this, assign a role to this user or add ${email} to OWNER_EMAIL in .env\n`));
+                                    console.log(chalk.cyan(`To fix this, assign a role to this user (custom claims) and retry login.\n`));
 
                                     res.writeHead(403, { 'Content-Type': 'application/json' });
                                     res.end(JSON.stringify({ error: 'Unauthorized Role', email }));
@@ -279,18 +320,29 @@ export class AuthService {
                             <title>CodeMan Authentication</title>
                             <script type="module">
                                 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-                                import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+                                import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
                                 
                                 const firebaseConfig = ${JSON.stringify(clientEnv)};
                                 const nonce = "${this.currentNonce}";
                                 const app = initializeApp(firebaseConfig);
                                 const auth = getAuth(app);
+                                auth.useDeviceLanguage();
 
-                                const verifyWithServer = async (token) => {
+                                const setError = (msg) => {
+                                    const el = document.getElementById('error');
+                                    if (el) el.innerText = msg || '';
+                                };
+
+                                const debugEl = document.getElementById('debug');
+                                if (debugEl) {
+                                    debugEl.textContent = JSON.stringify(firebaseConfig, null, 2);
+                                }
+
+                                const verifyWithServer = async (token, refreshToken, expiresAt) => {
                                     const res = await fetch('/callback', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ token, nonce })
+                                        body: JSON.stringify({ token, refreshToken, expiresAt, nonce })
                                     });
                                     const data = await res.json();
                                     
@@ -310,6 +362,20 @@ export class AuthService {
                                     }
                                 };
 
+                                // Redirect fallback (for popup restrictions)
+                                try {
+                                    const redirectResult = await getRedirectResult(auth);
+                                    if (redirectResult?.user) {
+                                        const token = await redirectResult.user.getIdToken();
+                                        const refreshToken = redirectResult.user.refreshToken || redirectResult.user.stsTokenManager?.refreshToken;
+                                        const expiresAt = redirectResult.user.stsTokenManager?.expirationTime;
+                                        await verifyWithServer(token, refreshToken, expiresAt);
+                                    }
+                                } catch (e) {
+                                    console.error("Redirect auth failed:", e);
+                                    setError(e?.message || String(e));
+                                }
+
                                 onAuthStateChanged(auth, async (user) => {
                                     if (user && document.cookie.includes('codeman_session=active')) {
                                         const btn = document.getElementById('btn');
@@ -320,14 +386,16 @@ export class AuthService {
                                         
                                         try {
                                             const token = await user.getIdToken();
-                                            await verifyWithServer(token);
+                                            const refreshToken = user.refreshToken || user.stsTokenManager?.refreshToken;
+                                            const expiresAt = user.stsTokenManager?.expirationTime;
+                                            await verifyWithServer(token, refreshToken, expiresAt);
                                         } catch (e) {
                                             console.error("Auto-login failed:", e);
                                             if (btn) {
                                                 btn.innerText = 'Sign in with Google';
                                                 btn.disabled = false;
                                             }
-                                            document.getElementById('error').innerText = e.message;
+                                            setError(e.message);
                                         }
                                     }
                                 });
@@ -343,12 +411,19 @@ export class AuthService {
                                     try {
                                         const result = await signInWithPopup(auth, provider);
                                         const token = await result.user.getIdToken();
-                                        await verifyWithServer(token);
+                                        const refreshToken = result.user.refreshToken || result.user.stsTokenManager?.refreshToken;
+                                        const expiresAt = result.user.stsTokenManager?.expirationTime;
+                                        await verifyWithServer(token, refreshToken, expiresAt);
                                     } catch (error) {
                                         console.error(error);
+                                        const code = error?.code || '';
+                                        if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment' || code === 'auth/popup-closed-by-user') {
+                                            await signInWithRedirect(auth, provider);
+                                            return;
+                                        }
                                         btn.innerText = 'Sign in with Google';
                                         btn.disabled = false;
-                                        document.getElementById('error').innerText = error.message;
+                                        setError(error.message || String(error));
                                     }
                                 };
                             </script>
@@ -543,6 +618,10 @@ export class AuthService {
                                     </div>
                                 </div>
                                 <div id="error" class="error"></div>
+                                <details class="debug" style="margin-top: 1rem; text-align: left;">
+                                    <summary style="cursor: pointer; color: #94a3b8;">Auth Debug</summary>
+                                    <pre id="debug" style="white-space: pre-wrap; font-size: 0.75rem; color: #94a3b8;"></pre>
+                                </details>
                             </div>
                         </body>
                         </html>
@@ -552,11 +631,36 @@ export class AuthService {
             });
 
             // Error Handler for Port Conflict
+            const tryListen = (port: number) => {
+                this.PORT = port;
+                this.server?.listen(this.PORT, async () => {
+                    const url = `http://localhost:${this.PORT}`;
+                    console.log(`🌍 Opening browser at ${url}...`);
+                    await openBrowser(url);
+                });
+            };
+
+            const startTimeout = () => {
+                setTimeout(() => {
+                    if (this.server) {
+                        console.log(chalk.red('\n⌛ Auth timed out. No login received.'));
+                        console.log(chalk.gray('   Please retry and complete the browser login.'));
+                        this.closeServer();
+                        resolve(false);
+                    }
+                }, this.LOGIN_TIMEOUT_MS);
+            };
+
             this.server.on('error', (e: any) => {
                 if (e.code === 'EADDRINUSE') {
                     console.error(chalk.red(`\n❌ Port ${this.PORT} is still in use.`));
-                    console.error(chalk.yellow(`Retrying after force kill did not work immediately...`));
-                    // Optional: Try one more time recursively or just fail
+                    const nextPort = this.PORT + 1;
+                    if (nextPort <= 3010) {
+                        console.log(chalk.yellow(`Retrying on port ${nextPort}...`));
+                        tryListen(nextPort);
+                        startTimeout();
+                        return;
+                    }
                 } else {
                     console.error(chalk.red(`\n❌ Server error: ${e.message}`));
                 }
@@ -564,11 +668,8 @@ export class AuthService {
                 resolve(false);
             });
 
-            this.server.listen(this.PORT, async () => {
-                const url = `http://localhost:${this.PORT}`;
-                console.log(`🌍 Opening browser at ${url}...`);
-                await openBrowser(url);
-            });
+            tryListen(this.PORT);
+            startTimeout();
         });
     }
 

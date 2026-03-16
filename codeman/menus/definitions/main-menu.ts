@@ -139,7 +139,7 @@ async function getProjectOptions(s: GlobalState): Promise<MenuOption[]> {
 }
 
 async function getDynamicMainMenuOptions(s: GlobalState): Promise<MenuOption[]> {
-    if (s.project.type === 'unknown' || !s.project.rootPath) {
+    if (!s.project.rootPath) {
         return getLauncherOptions(s);
     }
     return getProjectOptions(s);
@@ -148,10 +148,12 @@ async function getDynamicMainMenuOptions(s: GlobalState): Promise<MenuOption[]> 
 export const MainMenuDef: MenuDefinition = {
     id: 'ROOT',
     title: async (s) => {
-        const type = s.project.type === 'nextjs' ? 'nextjs'
-            : s.project.type === 'flutter' ? 'flutter'
-                : s.project.type === 'unknown' ? 'welcome' // Launcher
-                    : 'custom';
+        const hasProject = !!s.project.rootPath;
+        const type = !hasProject ? 'welcome'
+            : s.project.type === 'nextjs' ? 'nextjs'
+                : s.project.type === 'flutter' ? 'flutter'
+                    : s.project.type === 'unknown' ? 'welcome'
+                        : 'custom';
         return await getCodemanHeaderString(type as any);
     },
     type: 'dynamic',

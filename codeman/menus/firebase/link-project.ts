@@ -56,14 +56,6 @@ export const LinkProjectMenu: MenuNode = {
 
         if (clientJsFile === 'cancel') return 'firebase-manager';
 
-        // Owner Email Prompt
-        const { ownerEmail } = await inquirer.prompt([{
-            type: 'input',
-            name: 'ownerEmail',
-            message: 'Enter Owner Email (for .env):',
-            validate: (input) => input.includes('@') ? true : 'Valid email required'
-        }]);
-
         // Process Files
         console.log(chalk.cyan('\n⚙️  Processing credentials...'));
 
@@ -98,8 +90,7 @@ export const LinkProjectMenu: MenuNode = {
             else envLines.push(`${key}=${val}`);
         };
 
-        setEnv('OWNER_EMAIL', ownerEmail);
-        setEnv('NEXT_PUBLIC_FIREBASE_PROJECT_ID', projectId);
+        setEnv('FIREBASE_PROJECT_ID', projectId);
         setEnv('GOOGLE_APPLICATION_CREDENTIALS', 'service-account.json');
 
         await fs.writeFile(envPath, envLines.join('\n'));
@@ -148,12 +139,12 @@ import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
     // TODO: Ensure these match your client config from vishnu/ folder
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.FIREBASE_APP_ID
 };
 
 // Check if we have a config in the raw JS file to extract values from?
@@ -172,7 +163,7 @@ import { getAuth, onAuthStateChanged, User } from "firebase/auth";
 import { initializeApp, getApps } from "firebase/app";
 
 // Initialize Firebase (Ensure env vars are set!)
-// const app = getApps().length === 0 ? initializeApp(JSON.parse(process.env.NEXT_PUBLIC_FIREBASE_CONFIG || '{}')) : getApps()[0];
+// const app = getApps().length === 0 ? initializeApp(JSON.parse(process.env.FIREBASE_CONFIG || '{}')) : getApps()[0];
 // Note: You need to ensure firebase app is initialized in your project.
 
 interface AuthContextType {
