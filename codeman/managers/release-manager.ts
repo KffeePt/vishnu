@@ -104,6 +104,9 @@ export class ReleaseManager {
         try {
             await this.execPromise('git add .', projectRoot);
 
+            const status = await this.execPromise('git status --porcelain', projectRoot);
+            const hasChanges = status.trim().length > 0;
+
             if (!skipCheck) {
                 // Check if tag exists
                 const exists = await this.checkTagExists(projectRoot, version);
@@ -125,7 +128,11 @@ export class ReleaseManager {
                 }
             }
 
-            await this.execPromise(`git commit -m "chore: bump version to ${version}"`, projectRoot);
+            if (hasChanges) {
+                await this.execPromise(`git commit -m "chore: bump version to ${version}"`, projectRoot);
+            } else {
+                console.log(chalk.gray('No changes to commit. Tagging current HEAD.'));
+            }
             await this.execPromise(`git tag ${version}`, projectRoot);
             console.log(chalk.green(`Tagged ${version}`));
 
