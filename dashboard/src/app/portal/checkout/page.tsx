@@ -1,12 +1,9 @@
 "use client";
 
-import { useAuth } from "@/components/providers/auth-provider";
-import { Button } from "@/components/ui/button";
 import { CreditCard, CheckCircle2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 export default function CheckoutPage() {
-  const { user } = useAuth();
   const searchParams = useSearchParams();
   const packages = searchParams.getAll("packages");
 

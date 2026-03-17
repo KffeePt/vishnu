@@ -16,7 +16,7 @@ export default async function AdminRootLayout({ children }: { children: React.Re
     // Basic verification - just ensure they are logged in
     // Real role checks are done inside pages or deeper layouts (like admin/system)
     await adminAuth.verifySessionCookie(sessionCookie, true);
-  } catch (error) {
+  } catch {
     redirect("/login");
   }
 

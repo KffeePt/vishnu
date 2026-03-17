@@ -581,6 +581,34 @@ registerScript('dev-dojo-mode', async () => {
     return 'dev-dojo';
 });
 
+registerScript('dev-dojo-close', async () => {
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+    const { state } = await import('../core/state');
+    const { ProcessManager } = await import('../core/process-manager');
+    const { ProcessUtils } = await import('../utils/process-utils');
+
+    console.log(chalk.yellow('\n🧹 Closing Dev Environment...'));
+    const projectType = state.project.type;
+
+    if (projectType === 'nextjs') {
+        await ProcessManager.killByTitle('Firebase Emulators');
+        await ProcessManager.killByTitle('Triada Dev Server');
+    } else if (projectType === 'flutter') {
+        await ProcessManager.killByTitle('Firebase Emulators');
+        await ProcessManager.killByTitle('Flutter Web Server');
+        await ProcessUtils.killAllEmulators();
+    } else {
+        await ProcessManager.killByTitle('Firebase Emulators');
+        await ProcessManager.killByTitle('Triada Dev Server');
+        await ProcessManager.killByTitle('Flutter Web Server');
+    }
+
+    console.log(chalk.green('✅ Close command sent.'));
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    return 'dev-dojo';
+});
+
 registerScript('openEmulatorUI', async () => {
     const chalk = (await import('chalk')).default;
     const path = await import('path');
@@ -1339,24 +1367,177 @@ registerScript('runCleanAllFiles', async () => {
     return 'clean-menu';
 });
 
+async function detectNodeRunner(projectRoot: string): Promise<'npm' | 'bun'> {
+    const pkgPath = path.join(projectRoot, 'package.json');
+    const bunLock = path.join(projectRoot, 'bun.lock');
+    const bunLockb = path.join(projectRoot, 'bun.lockb');
 
-export async function doRunRelease() {
-    const { BuildManager } = await import('../managers/build-manager');
+    if (fs.existsSync(bunLock) || fs.existsSync(bunLockb)) return 'bun';
+
+    if (fs.existsSync(pkgPath)) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+            if (typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith('bun@')) {
+                return 'bun';
+            }
+        } catch { }
+    }
+
+    return 'npm';
+}
+
+async function runNodeScript(projectRoot: string, scriptName: string): Promise<boolean> {
+    const pkgPath = path.join(projectRoot, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+        console.log(chalk.gray(`(No package.json found. Skipping ${scriptName}.)`));
+        return true;
+    }
+
+    let pkg: any = {};
+    try {
+        pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    } catch {
+        console.log(chalk.yellow(`Could not parse package.json. Skipping ${scriptName}.`));
+        return true;
+    }
+
+    if (!pkg.scripts || !pkg.scripts[scriptName]) {
+        console.log(chalk.gray(`(No "${scriptName}" script found. Skipping.)`));
+        return true;
+    }
+
+    const runner = await detectNodeRunner(projectRoot);
+    console.log(chalk.cyan(`Running "${scriptName}" using ${runner}...`));
+
+    const { spawn } = await import('child_process');
+    return new Promise<boolean>((resolve) => {
+        const child = spawn(runner, ['run', scriptName], {
+            cwd: projectRoot,
+            shell: true,
+            stdio: 'inherit'
+        });
+        child.on('close', (code) => resolve(code === 0));
+    });
+}
+
+async function runReleaseTests(projectRoot: string, projectType: string): Promise<boolean> {
+    if (projectType === 'flutter') {
+        const { BuildManager } = await import('../managers/build-manager');
+        return await BuildManager.runTests(projectRoot);
+    }
+
+    return await runNodeScript(projectRoot, 'test');
+}
+
+async function runReleaseBuild(projectRoot: string, projectType: string): Promise<boolean> {
+    if (projectType === 'flutter') {
+        const { BuildManager } = await import('../managers/build-manager');
+        await BuildManager.buildAll(projectRoot, 'release');
+        return true;
+    }
+
+    // Prefer "build", fallback to "build:verify"
+    const pkgPath = path.join(projectRoot, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+        console.log(chalk.gray('(No package.json found. Skipping build.)'));
+        return true;
+    }
+
+    let pkg: any = {};
+    try {
+        pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    } catch {
+        console.log(chalk.yellow('Could not parse package.json. Skipping build.'));
+        return true;
+    }
+
+    if (pkg.scripts?.build) {
+        return await runNodeScript(projectRoot, 'build');
+    }
+
+    if (pkg.scripts?.['build:verify']) {
+        return await runNodeScript(projectRoot, 'build:verify');
+    }
+
+    console.log(chalk.gray('(No build script found. Skipping.)'));
+    return true;
+}
+
+export async function runReleasePipeline(): Promise<boolean> {
     const { ReleaseManager } = await import('../managers/release-manager');
     const { state } = await import('../core/state');
     const inquirer = (await import('inquirer')).default;
-    const chalk = (await import('chalk')).default;
-    const projectRoot = state.project.rootPath;
+    const { ProcessUtils } = await import('../utils/process-utils');
+    const { exec } = await import('child_process');
+    const projectRoot = state.project.rootPath || process.cwd();
+    const projectType = state.project.type;
 
     console.clear();
     console.log(chalk.magenta('🚀 CI/CD Release Pipeline Initiated'));
 
+    const getGhReleaseTags = async (): Promise<string[]> => {
+        const hasGh = await ProcessUtils.checkCommand('gh');
+        if (!hasGh) return [];
+
+        const stdout = await new Promise<string>((resolve, reject) => {
+            exec('gh release list --limit 200 --json tagName --jq ".[].tagName"', { cwd: projectRoot }, (err, out) => {
+                if (err) return reject(err);
+                resolve(out || '');
+            });
+        }).catch(() => '');
+
+        return stdout.split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+    };
+
+    const getLatestStableVersion = (tags: string[]): string | null => {
+        const versions = tags
+            .map((tag) => {
+                const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag);
+                if (!match) return null;
+                return {
+                    value: `${match[1]}.${match[2]}.${match[3]}`,
+                    parts: [Number(match[1]), Number(match[2]), Number(match[3])]
+                };
+            })
+            .filter(Boolean) as { value: string; parts: number[] }[];
+
+        if (versions.length === 0) return null;
+        versions.sort((a, b) => a.parts[0] - b.parts[0] || a.parts[1] - b.parts[1] || a.parts[2] - b.parts[2]);
+        return versions[versions.length - 1].value;
+    };
+
+    const getNextPrereleaseIteration = (tags: string[], baseVersion: string, stage: 'alpha' | 'beta'): number => {
+        const escaped = baseVersion.replace(/\./g, '\\.');
+        const regex = new RegExp(`^v${escaped}-${stage}\\.(\\d+)$`);
+        const numbers = tags
+            .map(tag => {
+                const match = regex.exec(tag);
+                return match ? Number.parseInt(match[1], 10) : null;
+            })
+            .filter((n): n is number => typeof n === 'number' && !Number.isNaN(n));
+
+        if (numbers.length === 0) return 1;
+        return Math.max(...numbers) + 1;
+    };
+
+    const releaseTags = await getGhReleaseTags();
+    const latestStable = getLatestStableVersion(releaseTags);
+    const exampleVersion = latestStable ?? '1.0.0';
+
     // 1. Ask for Base Version
-    const { baseVersion } = await inquirer.prompt([{
+    const { baseVersionInput } = await inquirer.prompt([{
         type: 'input',
-        name: 'baseVersion',
-        message: 'Enter Base Version (e.g., 1.0.0):',
-        validate: (input: string) => /^\d+\.\d+\.\d+$/.test(input) ? true : 'Invalid format. Use X.Y.Z'
+        name: 'baseVersionInput',
+        message: latestStable
+            ? `Enter Base Version (e.g., ${exampleVersion}) or leave blank for latest:`
+            : `Enter Base Version (e.g., ${exampleVersion}):`,
+        validate: (input: string) => {
+            const trimmed = input.trim();
+            if (trimmed === '') {
+                return latestStable ? true : 'No existing releases found. Enter X.Y.Z';
+            }
+            return /^v?\d+\.\d+\.\d+$/.test(trimmed) ? true : 'Invalid format. Use X.Y.Z';
+        }
     }]);
 
     // 2. Ask for Stage
@@ -1371,73 +1552,146 @@ export async function doRunRelease() {
         ]
     }]);
 
+    const cleanedBase = (baseVersionInput.trim() === '' ? latestStable : baseVersionInput.trim()) || exampleVersion;
+    const baseVersion = cleanedBase.startsWith('v') ? cleanedBase.slice(1) : cleanedBase;
+
     let tag = `v${baseVersion}`;
     let pubspecVersion = baseVersion;
 
     if (stage !== 'prod') {
-        const { iteration } = await inquirer.prompt([{
-            type: 'number',
-            name: 'iteration',
-            message: `Enter ${stage} iteration number (e.g. 1):`,
-            default: 1
+        const nextIteration = getNextPrereleaseIteration(releaseTags, baseVersion, stage as 'alpha' | 'beta');
+        const { iterationRaw } = await inquirer.prompt([{
+            type: 'input',
+            name: 'iterationRaw',
+            message: `Enter ${stage} iteration number (e.g. ${nextIteration}):`,
+            default: String(nextIteration),
+            validate: (input: string) => /^[1-9]\d*$/.test(input.trim()) ? true : 'Enter a positive integer'
         }]);
+        const iteration = Number.parseInt(iterationRaw.trim(), 10);
         tag += `-${stage}.${iteration}`;
         pubspecVersion += `+${stage === 'alpha' ? 100 : 200}${iteration.toString().padStart(2, '0')}`;
     }
 
     // 3. Confirm Details
     console.log(chalk.cyan('\nSummary:'));
-    console.log(`- Project: ${state.project.type.toUpperCase()}`);
+    console.log(`- Project: ${projectType.toUpperCase()}`);
     console.log(`- Base Version: ${pubspecVersion}`);
     console.log(`- Tag: ${tag}`);
 
     const { confirm } = await inquirer.prompt([{
         type: 'confirm',
         name: 'confirm',
-        message: 'Proceed with build and tag?',
+        message: 'Proceed with build, tests, and tag?',
         default: true
     }]);
 
     if (!confirm) {
         console.log(chalk.yellow('Aborted.'));
-        await new Promise(r => setTimeout(r, 1000));
-        return 'deployment-menu';
+        await new Promise(r => setTimeout(r, 800));
+        return false;
     }
 
     try {
-        if (state.project.type === 'flutter') {
+        if (projectType === 'flutter') {
             await ReleaseManager.setVersion(projectRoot, pubspecVersion);
         } else {
-            // Node projects usually use package.json 
-            // the tag is mostly for GH. We could bump package.json here if ReleaseManager supported it.
-            console.log(chalk.gray('(Node version bump not fully implemented locally, relying on git tag)'));
+            console.log(chalk.gray('(Node version bump not implemented; relying on git tag)'));
         }
 
         const tagSuccess = await ReleaseManager.gitCommitAndTag(projectRoot, tag);
-        if (!tagSuccess) return 'deployment-menu';
+        if (!tagSuccess) return false;
 
-        await BuildManager.buildAll(projectRoot, 'release');
-
-        const ghSuccess = await ReleaseManager.createGhRelease(projectRoot, tag);
-        if (ghSuccess) {
-            await ReleaseManager.uploadArtifacts(projectRoot, tag);
+        console.log(chalk.cyan('\nStep 1: Tests'));
+        const testsOk = await runReleaseTests(projectRoot, projectType);
+        if (!testsOk) {
+            console.log(chalk.red('\n❌ Tests failed. Aborting release.'));
+            return false;
         }
 
+        console.log(chalk.cyan('\nStep 2: Build'));
+        const buildOk = await runReleaseBuild(projectRoot, projectType);
+        if (!buildOk) {
+            console.log(chalk.red('\n❌ Build failed. Aborting release.'));
+            return false;
+        }
+
+        console.log(chalk.cyan('\nStep 3: GitHub Release'));
+        const ghSuccess = await ReleaseManager.createGhRelease(projectRoot, tag);
+        if (!ghSuccess) {
+            console.log(chalk.red('\n❌ GitHub Release failed.'));
+            return false;
+        }
+
+        await ReleaseManager.uploadArtifacts(projectRoot, tag);
+
         console.log(chalk.green('\n🎉 CI/CD Pipeline Completed Successfully!'));
+        return true;
 
     } catch (e: any) {
-        console.log(chalk.red(`\n❌ Pipeline Failed: ${e.message}`));
+        console.log(chalk.red(`\n❌ Pipeline Failed: ${e?.message || e}`));
+        if (e?.stack) console.log(chalk.gray(e.stack));
+        return false;
     }
-    
+}
+
+export async function doRunRelease() {
+    const inquirer = (await import('inquirer')).default;
+    const success = await runReleasePipeline();
+    if (!success) {
+        console.log(chalk.red('\nRelease pipeline did not complete successfully.'));
+    }
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'deployment-menu';
+}
+
+export async function runDeployPrepCore(): Promise<boolean> {
+    const chalk = (await import('chalk')).default;
+    const root = process.cwd();
+    const results: Array<{ label: string; ok: boolean }> = [];
+
+    const runStep = async (label: string, fn: () => Promise<boolean>) => {
+        console.log(chalk.cyan(`\n${label}`));
+        try {
+            const ok = await fn();
+            results.push({ label, ok });
+            if (!ok) {
+                console.log(chalk.red(`  ❌ ${label} failed.`));
+            } else {
+                console.log(chalk.green(`  ✅ ${label} complete.`));
+            }
+        } catch (e: any) {
+            results.push({ label, ok: false });
+            console.log(chalk.red(`  ❌ ${label} crashed: ${e?.message || e}`));
+            if (e?.stack) console.log(chalk.gray(e.stack));
+        }
+    };
+
+    await runStep('Core: Lint', async () => await runNodeScript(root, 'lint'));
+    await runStep('Core: Tests', async () => await runNodeScript(root, 'test'));
+    await runStep('Core: Build Verify', async () => await runNodeScript(root, 'build:verify'));
+
+    const dashboardRoot = path.join(root, 'dashboard');
+    if (fs.existsSync(path.join(dashboardRoot, 'package.json'))) {
+        await runStep('Dashboard: Lint', async () => await runNodeScript(dashboardRoot, 'lint'));
+        await runStep('Dashboard: Build', async () => await runNodeScript(dashboardRoot, 'build'));
+    } else {
+        console.log(chalk.gray('\n(Dashboard package.json not found. Skipping dashboard checks.)'));
+    }
+
+    console.log(chalk.cyan('\nPrep Summary:'));
+    results.forEach(r => {
+        console.log(`${r.ok ? '✅' : '❌'} ${r.label}`);
+    });
+
+    return results.every(r => r.ok);
 }
 
 registerScript('runRelease', async () => {
     const { ProcessManager } = await import('../core/process-manager');
     const { state } = await import('../core/state');
-    
-    await ProcessManager.spawnDetachedWindow('CI/CD Release', 'codeman --run-release', state.project.rootPath);
+
+    const root = state.project.rootPath || process.cwd();
+    await ProcessManager.spawnDetachedWindow('CI/CD Release', 'codeman --run-release', root);
     return 'deployment-menu';
 });
 
@@ -1468,12 +1722,12 @@ registerScript('maintDeployAll', async () => {
     // Next, launch the interactive TUI Release process
     // which builds CodeMan Windows/Mac/Linux and uploads GH Release
     console.log(chalk.cyan('Step 1: TUI Release Pipeline'));
-    await doRunRelease();
-
-    
-    // Check if the user aborted the TUI release process (it returns to a menu if failed/aborted)
-    // Actually runRelease returns 'deployment-menu' always unless it crashes.
-    // For safety, let's just proceed to Firebase.
+    const releaseOk = await runReleasePipeline();
+    if (!releaseOk) {
+        console.log(chalk.red('\n❌ Release pipeline failed or was aborted. Skipping Firebase deploy.'));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+        return 'maint-deploy-menu';
+    }
     
     console.log(chalk.cyan('\nStep 2: Firebase Deployment (Functions + Rules)'));
     await ReleaseManager.deployAllFirebase(process.cwd());
@@ -1786,7 +2040,8 @@ registerScript('branchRemove', async () => {
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'branching-menu';
 });
-registerScript('enterMaintenance', async () => {
+
+async function requireMaintenanceAccess(): Promise<boolean> {
     const { AuthService } = await import('../core/auth');
     const { state } = await import('../core/state');
     const chalk = (await import('chalk')).default;
@@ -1812,25 +2067,57 @@ registerScript('enterMaintenance', async () => {
     const success = await AuthService.login(state, vishnuAuth);
 
     if (success && state.user?.isAdmin) {
-        return 'maintenance-menu';
-    } else {
-        const inquirer = (await import('inquirer')).default;
-        console.error(chalk.red('\n🚫 Unauthorized. Maintenance tools are restricted to Owners/Admins of the Vishnu project.'));
-        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
-        return 'settings';
+        state.project.rootPath = vishnuRoot;
+        state.setProjectType('custom');
+        return true;
     }
+
+    return false;
+}
+
+registerScript('enterMaintenance', async () => {
+    const inquirer = (await import('inquirer')).default;
+    const chalk = (await import('chalk')).default;
+    const ok = await requireMaintenanceAccess();
+    if (ok) return 'maintenance-menu';
+
+    console.error(chalk.red('\n🚫 Unauthorized. Maintenance tools are restricted to Owners/Admins of the Vishnu project.'));
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    return 'settings';
+});
+
+registerScript('enterMaintenanceDeploy', async () => {
+    const inquirer = (await import('inquirer')).default;
+    const chalk = (await import('chalk')).default;
+    const ok = await requireMaintenanceAccess();
+    if (ok) return 'maint-deploy-menu';
+
+    console.error(chalk.red('\n🚫 Unauthorized. Maintenance tools are restricted to Owners/Admins of the Vishnu project.'));
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    return 'settings';
 });
 
 registerScript('maintDeployPrep', async () => {
+    const inquirer = (await import('inquirer')).default;
+    const chalk = (await import('chalk')).default;
+
+    const ok = await runDeployPrepCore();
+    if (!ok) {
+        console.log(chalk.red('\n❌ Deploy prep encountered failures. Check logs above.'));
+    } else {
+        console.log(chalk.green('\n✅ Deploy prep completed successfully.'));
+    }
+
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'maint-deploy-menu';
+});
+
+registerScript('maintDeployPrepWindow', async () => {
     const { ProcessManager } = await import('../core/process-manager');
-    const { state } = await import('../core/state');
-    
-    // We launch the newly created CLI flag in a detached window
     await ProcessManager.spawnDetachedWindow(
-        'Vishnu Deploy Prep', 
-        'codeman --run-maint-deploy-prep', 
+        'Vishnu Deploy Prep',
+        'codeman --run-maint-deploy-prep',
         process.cwd()
     );
-    
     return 'maint-deploy-menu';
 });

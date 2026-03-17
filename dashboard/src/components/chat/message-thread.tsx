@@ -1,9 +1,7 @@
 "use client";
-
-import { useState } from "react";
 import { format } from "date-fns";
 import { User, Paperclip, CheckCheck } from "lucide-react";
-import Image from "next/image";
+type TimestampLike = { toDate: () => Date };
 
 interface Message {
   id: string;
@@ -11,7 +9,7 @@ interface Message {
   senderRole: "client" | "staff" | "admin" | "maintainer";
   text: string;
   attachments?: string[]; // URLs
-  timestamp: Date | any;
+  timestamp: Date | TimestampLike;
   readBy: string[];
 }
 
@@ -32,7 +30,11 @@ export function MessageThread({ messages, currentUserId }: { messages: Message[]
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {messages.map((msg, idx) => {
         const isMe = msg.senderId === currentUserId;
-        const timeStr = msg.timestamp?.toDate ? format(msg.timestamp.toDate(), "h:mm a") : "";
+        const timeStr = msg.timestamp instanceof Date
+          ? format(msg.timestamp, "h:mm a")
+          : msg.timestamp?.toDate
+            ? format(msg.timestamp.toDate(), "h:mm a")
+            : "";
 
         return (
           <div key={msg.id || idx} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>

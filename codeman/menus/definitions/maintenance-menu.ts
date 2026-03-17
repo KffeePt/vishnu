@@ -3,7 +3,7 @@ import { GlobalState } from '../../core/state';
 
 export const MaintenanceMenuDef: MenuDefinition = {
     id: 'maintenance-menu',
-    title: '🔧 Maintenance',
+    title: '🔧 Maintenance & Admin',
     type: 'dynamic',
     options: async (state: GlobalState) => {
         const user = state.user;
@@ -11,16 +11,16 @@ export const MaintenanceMenuDef: MenuDefinition = {
         
         const opts: MenuOption[] = [];
 
-        opts.push({ label: '--- CI/CD (Admin Only) ---', value: 'sep1', type: 'separator' });
+        opts.push({ label: '--- Release & Deploy (Admin) ---', value: 'sep1', type: 'separator' });
         opts.push({
-            label: '🚀 Deployment Options',
+            label: '🚀 Admin Deploy Options',
             value: 'maint-deploy',
             action: { type: 'navigate', target: 'maint-deploy-menu' }
         });
         
 
 
-        opts.push({ label: '--- Local Tasks ---', value: 'sep_local', type: 'separator' });
+        opts.push({ label: '--- Local Validation ---', value: 'sep_local', type: 'separator' });
         opts.push({
             label: '🧪 Run Tests',
             value: 'run-tests',
@@ -38,7 +38,7 @@ export const MaintenanceMenuDef: MenuDefinition = {
         });
 
 
-        opts.push({ label: '--- Branching (Maintainer) ---', value: 'sep2', type: 'separator' });
+        opts.push({ label: '--- Project Ops ---', value: 'sep2', type: 'separator' });
         opts.push({
             label: '🌿 Branch Management',
             value: 'branching-menu',
@@ -46,7 +46,7 @@ export const MaintenanceMenuDef: MenuDefinition = {
         });
         
 
-        opts.push({ label: '--- Auth / Settings ---', value: 'sep3', type: 'separator' });
+        opts.push({ label: '--- Admin Tools ---', value: 'sep3', type: 'separator' });
         opts.push({
             label: '👑 Set User Claims (TUI) [New Window]',
             value: 'set-claims',

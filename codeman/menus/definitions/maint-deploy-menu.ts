@@ -6,6 +6,11 @@ export const MaintDeployMenuDef: MenuDefinition = {
     type: 'static',
     options: [
         {
+            label: '🧪 Deploy Prep (Local Checks) [New Window]',
+            value: 'maint-deploy-prep',
+            action: { type: 'script', handler: 'maintDeployPrepWindow' }
+        },
+        {
             label: '🌟 Deploy All (TUI + Dashboard + Rules)',
             value: 'deploy-all',
             action: { type: 'script', handler: 'maintDeployAll' }
@@ -14,11 +19,6 @@ export const MaintDeployMenuDef: MenuDefinition = {
             label: '📦 Deploy TUI Release (Installers)',
             value: 'deploy-release',
             action: { type: 'script', handler: 'maintDeployRelease' }
-        },
-        {
-            label: '🏗️  TUI & Dashboard Deploy Prep (Local)',
-            value: 'maint-deploy-prep',
-            action: { type: 'script', handler: 'maintDeployPrep' }
         },
         {
             label: '🔒 Deploy Rules (Firestore/Storage/RTDB)',

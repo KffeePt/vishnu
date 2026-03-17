@@ -8,7 +8,9 @@ import {
   GithubAuthProvider, 
   RecaptchaVerifier, 
   signInWithPhoneNumber,
-  ConfirmationResult
+  ConfirmationResult,
+  AuthProvider,
+  UserCredential
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase/client";
@@ -17,13 +19,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Mail, Github, Chrome, Phone, ArrowLeft, KeyRound } from "lucide-react";
-import { useAuth } from "@/components/providers/auth-provider";
-
 declare global {
   interface Window {
-    recaptchaVerifierOverlay: any;
+    recaptchaVerifierOverlay?: RecaptchaVerifier;
+    grecaptcha?: { reset: (id?: number) => void };
   }
-  var grecaptcha: any;
 }
 
 type AuthView = "main" | "email" | "phone";
@@ -44,8 +44,6 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   
   const router = useRouter();
-  const { isClient } = useAuth(); // We can't immediately trust this right after auth, we need to wait for the next render or fetch claims
-
   useEffect(() => {
     // We only initialize recaptcha when the dialog opens, to avoid multiple invisible widget issues
     if (open && !window.recaptchaVerifierOverlay) {
@@ -67,7 +65,7 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
     }
   }, [open]);
 
-  const handleSuccess = async (userResult: any) => {
+  const handleSuccess = async (userResult: UserCredential) => {
     // Give it a tiny delay for context to update if needed, then route
     setTimeout(async () => {
       onOpenChange(false);
@@ -82,14 +80,15 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
     }, 500);
   };
 
-  const handleProviderLogin = async (provider: any, providerName: string) => {
+  const handleProviderLogin = async (provider: AuthProvider, providerName: string) => {
     setLoading(true);
     setError("");
     try {
       const result = await signInWithPopup(auth, provider);
       await handleSuccess(result);
-    } catch (err: any) {
-      setError(`Failed to sign in with ${providerName}. ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setError(`Failed to sign in with ${providerName}. ${message}`);
       setLoading(false);
     }
   };
@@ -101,7 +100,7 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       await handleSuccess(result);
-    } catch (err: any) {
+    } catch {
       setError("Invalid credentials or user does not exist.");
       setLoading(false);
     }
@@ -115,13 +114,19 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
     setError("");
     try {
       const appVerifier = window.recaptchaVerifierOverlay;
+      if (!appVerifier) {
+        setError("Recaptcha not ready. Please try again.");
+        setLoading(false);
+        return;
+      }
       const confirmation = await signInWithPhoneNumber(auth, phone, appVerifier);
       setConfirmationResult(confirmation);
-    } catch (err: any) {
-      setError(`Failed to send SMS code. ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setError(`Failed to send SMS code. ${message}`);
       if (window.recaptchaVerifierOverlay) {
-         window.recaptchaVerifierOverlay.render().then((widgetId: any) => {
-           grecaptcha.reset(widgetId);
+         window.recaptchaVerifierOverlay.render().then((widgetId) => {
+           window.grecaptcha?.reset(widgetId);
          });
       }
     } finally {
@@ -138,7 +143,7 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
     try {
       const result = await confirmationResult.confirm(otp);
       await handleSuccess(result);
-    } catch (err: any) {
+    } catch {
       setError(`Invalid verification code.`);
       setLoading(false);
     }

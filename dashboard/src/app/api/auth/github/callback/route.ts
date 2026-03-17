@@ -29,8 +29,9 @@ export async function GET(request: NextRequest) {
 
         // Redirect back to the dashboard home page after success
         return NextResponse.redirect(new URL("/", request.url));
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("OAuth Callback Error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        const message = error instanceof Error ? error.message : "OAuth callback failed";
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

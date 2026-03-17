@@ -191,7 +191,7 @@ export default function LandingPage() {
                 <Card key={i} className="bg-zinc-900/50 border-white/5 relative">
                   <CardContent className="p-8 pt-10">
                     <Quote className="absolute top-6 left-6 h-8 w-8 text-white/5" />
-                    <p className="text-zinc-300 italic mb-6 relative z-10">"{t.quote}"</p>
+                    <p className="text-zinc-300 italic mb-6 relative z-10">&ldquo;{t.quote}&rdquo;</p>
                     <div>
                       <div className="font-bold text-white">{t.author}</div>
                       <div className="text-sm text-graviton-cyan">{t.company}</div>

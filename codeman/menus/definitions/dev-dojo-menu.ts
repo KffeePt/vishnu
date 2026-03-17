@@ -22,6 +22,9 @@ export const getDevDojoOptions = async (state: GlobalState): Promise<MenuOption[
         { label: '🥷  Dev Environment', value: 'dev-dojo-mode', action: { type: 'script', handler: 'dev-dojo-mode' } }
     );
     options.push(
+        { label: '🧹 Close Dev Environment', value: 'dev-dojo-close', action: { type: 'script', handler: 'dev-dojo-close' } }
+    );
+    options.push(
         { label: '🧪 Open Emulator UI', value: 'open-emulator-ui', action: { type: 'script', handler: 'openEmulatorUI' } }
     );
     options.push(

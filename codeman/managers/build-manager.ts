@@ -241,15 +241,16 @@ export class BuildManager {
         }
     }
 
-    static async runTests(projectRoot: string): Promise<void> {
+    static async runTests(projectRoot: string): Promise<boolean> {
         console.log(chalk.cyan('\n=== Consultorio Test Runner (Enhanced) ==='));
 
         const logDir = path.join(projectRoot, this.getLogDir());
         const logsSubDir = path.join(logDir, 'logs');
         await fs.ensureDir(logsSubDir);
 
-        if (!await LockManager.acquire(projectRoot, '.tests_lock')) return;
+        if (!await LockManager.acquire(projectRoot, '.tests_lock')) return false;
 
+        let overallSuccess = true;
         try {
             // Setup
             await ProcessUtils.killProcess('flutter.exe');
@@ -434,15 +435,20 @@ export class BuildManager {
             // --- Generate details.md (structured project index for AI agents) ---
             await this.generateDetailsFile(projectRoot, results);
 
+            overallSuccess = failedCount === 0;
+
             // Cleanup
             console.log(chalk.yellow('Stopping Emulators...'));
             await ProcessUtils.killProcess('java.exe', true); // Kill firebase emulators
 
         } catch (e: any) {
             console.log(chalk.red(e.message));
+            overallSuccess = false;
         } finally {
             await LockManager.release(projectRoot, '.tests_lock');
         }
+
+        return overallSuccess;
     }
 
     static async launchEmulatorInteractive(filter?: 'android' | 'ios'): Promise<void> {

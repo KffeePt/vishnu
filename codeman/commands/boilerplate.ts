@@ -343,7 +343,13 @@ export async function createFlutterWidget(options?: { widgetName?: string }) {
         }
     ], options);
 
-    const snakeName = toSnakeCase(widgetName);
+    const resolvedWidgetName = typeof widgetName === 'string' ? widgetName.trim() : '';
+    if (!resolvedWidgetName) {
+        console.log(chalk.red('Widget name is required.'));
+        return;
+    }
+
+    const snakeName = toSnakeCase(resolvedWidgetName);
     const pascalName = toPascalCase(snakeName);
 
     const spinner = createSpinner('Creating Flutter widget...').start();
@@ -432,8 +438,15 @@ export async function createFlutterScreen(options?: { featureName?: string, scre
         }
     ], options);
 
-    const featureName = toSnakeCase(answers.featureName);
-    const screenName = toSnakeCase(answers.screenName);
+    const featureInput = typeof answers.featureName === 'string' ? answers.featureName.trim() : '';
+    const screenInput = typeof answers.screenName === 'string' ? answers.screenName.trim() : '';
+    if (!featureInput || !screenInput) {
+        console.log(chalk.red('Feature name and screen name are required.'));
+        return;
+    }
+
+    const featureName = toSnakeCase(featureInput);
+    const screenName = toSnakeCase(screenInput);
 
     const pascalScreenBase = toPascalCase(screenName);
     const screenClass = ensureSuffix(pascalScreenBase, 'Screen');
@@ -481,15 +494,23 @@ export async function createFlutterState(options?: { featureName?: string, state
         }
     ], options);
 
-    const featureName = toSnakeCase(answers.featureName);
-    const stateName = toSnakeCase(answers.stateName);
+    const featureInput = typeof answers.featureName === 'string' ? answers.featureName.trim() : '';
+    const stateInput = typeof answers.stateName === 'string' ? answers.stateName.trim() : '';
+    if (!featureInput || !stateInput) {
+        console.log(chalk.red('Feature name and state name are required.'));
+        return;
+    }
+
+    const featureName = toSnakeCase(featureInput);
+    const stateName = toSnakeCase(stateInput);
     const pascalBase = toPascalCase(stateName);
 
     const spinner = createSpinner('Creating Flutter state files...').start();
 
     try {
-        await createFlutterStateFiles(featureName, stateName, answers.type);
-        spinner.succeed(`Created ${answers.type} files under lib/features/${featureName}/state`);
+        const stateType = (answers.type ?? 'cubit') as 'bloc' | 'cubit';
+        await createFlutterStateFiles(featureName, stateName, stateType);
+        spinner.succeed(`Created ${stateType} files under lib/features/${featureName}/state`);
     } catch (e: any) {
         spinner.fail(e.message);
     }
@@ -780,7 +801,9 @@ export async function manageShadcnRegistry() {
 
         console.log(chalk.cyan('\nConfigured registries:'));
         entries.forEach(([key, value]) => {
-            const display = typeof value === 'string' ? value : value?.url;
+            const display = typeof value === 'string'
+                ? value
+                : (value as { url?: string })?.url ?? JSON.stringify(value);
             console.log(`- ${key}: ${display}`);
         });
         return;

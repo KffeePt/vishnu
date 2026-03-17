@@ -66,7 +66,7 @@ export class AuthService {
         // Fast-path session restore
         const lastAuth = UserConfigManager.getLastAuth();
         const cachedUser = UserConfigManager.getCachedUser();
-        const TEN_MINUTES = 10 * 60 * 1000;
+        const FIFTEEN_MINUTES = 15 * 60 * 1000;
 
         // Reload Env Vars to catch any manual changes
         const { createRequire } = await import('module');
@@ -180,33 +180,31 @@ export class AuthService {
         };
 
         // Attempt token restore (and refresh) before opening browser
-        if (!options.projectId) {
-            const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey);
-            if (storedIdToken) {
-                try {
-                    const decodedToken = await admin.auth().verifyIdToken(storedIdToken);
-                    const userRole = await resolveUserRole(decodedToken, storedIdToken);
+        const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey);
+        if (storedIdToken) {
+            try {
+                const decodedToken = await admin.auth().verifyIdToken(storedIdToken);
+                const userRole = await resolveUserRole(decodedToken, storedIdToken);
 
-                    if (userRole) {
-                        const email = decodedToken.email || 'unknown';
-                        const sessionUser = {
-                            email,
-                            uid: decodedToken.uid,
-                            isAdmin: userRole === 'admin' || userRole === 'owner',
-                            role: userRole as any
-                        };
-                        state.setUser(sessionUser);
-                        state.rawIdToken = storedIdToken;
-                        UserConfigManager.setLastAuth(Date.now(), sessionUser);
-                        console.log(chalk.green('\n✅ Session restored from stored token.'));
-                        return true;
-                    }
-                } catch {
-                    // Ignore and fall through to browser login
+                if (userRole) {
+                    const email = decodedToken.email || 'unknown';
+                    const sessionUser = {
+                        email,
+                        uid: decodedToken.uid,
+                        isAdmin: userRole === 'admin' || userRole === 'owner',
+                        role: userRole as any
+                    };
+                    state.setUser(sessionUser);
+                    state.rawIdToken = storedIdToken;
+                    UserConfigManager.setLastAuth(Date.now(), sessionUser);
+                    console.log(chalk.green('\n✅ Session restored from stored token.'));
+                    return true;
                 }
-            } else if (lastAuth && cachedUser && (Date.now() - lastAuth < TEN_MINUTES)) {
-                console.log(chalk.yellow('\n⚠️ Cached session found, but no valid token. Re-authentication required.'));
+            } catch {
+                // Ignore and fall through to browser login
             }
+        } else if (lastAuth && cachedUser && (Date.now() - lastAuth < FIFTEEN_MINUTES)) {
+            console.log(chalk.yellow('\n⚠️ Cached session found, but no valid token. Re-authentication required.'));
         }
 
         return new Promise((resolve) => {

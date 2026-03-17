@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({ status: "success" });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error creating session cookie:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }

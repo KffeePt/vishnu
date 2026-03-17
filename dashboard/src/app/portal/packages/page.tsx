@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@/components/providers/auth-provider";
 import { Check, Package as PackageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -42,7 +41,6 @@ const AVAILABLE_PACKAGES = [
 ];
 
 export default function PackagesPage() {
-  const { user } = useAuth();
   const router = useRouter();
   const [selectedPackages, setSelectedPackages] = useState<Set<string>>(new Set(["base"]));
 

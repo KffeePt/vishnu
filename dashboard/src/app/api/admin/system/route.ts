@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { adminAuth } from "@/lib/firebase/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get("__session")?.value;
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     };
 
     return NextResponse.json(diagnostics);
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error in /api/admin/system:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }

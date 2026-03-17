@@ -8,7 +8,8 @@ import {
   GithubAuthProvider, 
   RecaptchaVerifier, 
   signInWithPhoneNumber,
-  ConfirmationResult
+  ConfirmationResult,
+  AuthProvider
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase/client";
@@ -20,9 +21,9 @@ import { Loader2, Mail, Github, Chrome, Phone, ArrowLeft, KeyRound } from "lucid
 
 declare global {
   interface Window {
-    recaptchaVerifier: any;
+    recaptchaVerifier?: RecaptchaVerifier;
+    grecaptcha?: { reset: (id?: number) => void };
   }
-  var grecaptcha: any;
 }
 
 type AuthView = "main" | "email" | "phone";
@@ -48,14 +49,15 @@ export default function LoginPage() {
     }
   }, []);
 
-  const handleProviderLogin = async (provider: any, providerName: string) => {
+  const handleProviderLogin = async (provider: AuthProvider, providerName: string) => {
     setLoading(true);
     setError("");
     try {
       await signInWithPopup(auth, provider);
       router.replace('/portal');
-    } catch (err: any) {
-      setError(`Failed to sign in with ${providerName}. ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setError(`Failed to sign in with ${providerName}. ${message}`);
       setLoading(false);
     }
   };
@@ -67,7 +69,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       router.replace('/portal');
-    } catch (err: any) {
+    } catch {
       setError("Invalid credentials or user does not exist.");
       setLoading(false);
     }
@@ -81,14 +83,20 @@ export default function LoginPage() {
     setError("");
     try {
       const appVerifier = window.recaptchaVerifier;
+      if (!appVerifier) {
+        setError("Recaptcha not ready. Please try again.");
+        setLoading(false);
+        return;
+      }
       const confirmation = await signInWithPhoneNumber(auth, phone, appVerifier);
       setConfirmationResult(confirmation);
-    } catch (err: any) {
-      setError(`Failed to send SMS code. ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setError(`Failed to send SMS code. ${message}`);
       // Reset recaptcha on error so user can try again
       if (window.recaptchaVerifier) {
-         window.recaptchaVerifier.render().then((widgetId: any) => {
-           grecaptcha.reset(widgetId);
+         window.recaptchaVerifier.render().then((widgetId) => {
+           window.grecaptcha?.reset(widgetId);
          });
       }
     } finally {
@@ -105,7 +113,7 @@ export default function LoginPage() {
     try {
       await confirmationResult.confirm(otp);
       router.replace('/portal');
-    } catch (err: any) {
+    } catch {
       setError(`Invalid verification code.`);
       setLoading(false);
     }

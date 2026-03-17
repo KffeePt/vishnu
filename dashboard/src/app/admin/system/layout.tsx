@@ -21,7 +21,7 @@ export default async function AdminSystemLayout({ children }: { children: React.
       // Valid session but not an admin or owner -> Portal or root
       redirect("/admin");
     }
-  } catch (error) {
+  } catch {
     // Invalid or expired session cookie -> Login
     redirect("/login");
   }

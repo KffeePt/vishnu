@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { MessageThread } from "@/components/chat/message-thread";
 import { MessageInput } from "@/components/chat/message-input";
 import { Button } from "@/components/ui/button";
-import { Plus, MessageSquare, AlertCircle } from "lucide-react";
+import { Plus, MessageSquare } from "lucide-react";
 
 // Mock data to replace with Firebase queries later
 const mockThreads = [
@@ -18,8 +18,14 @@ export default function ClientSupportPage() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newSubject, setNewSubject] = useState("");
+  const [baseTime] = useState(() => new Date());
 
   const activeThread = mockThreads.find(t => t.id === activeThreadId);
+
+  const messages = [
+    { id: "1", senderId: user?.uid || "client1", senderRole: "client", text: "Hi, I need help updating my MX records.", timestamp: new Date(baseTime.getTime() - 3600000), readBy: ["admin"] },
+    { id: "2", senderId: "admin", senderRole: "staff", text: "Hello! Please send a screenshot of your current GoDaddy DNS settings.", timestamp: baseTime, readBy: [] },
+  ];
 
   const handleSendMessage = async (text: string, files: File[]) => {
     // Calling Cloud Function or Firestore directly
@@ -114,10 +120,7 @@ export default function ClientSupportPage() {
             
             {/* Chat Area */}
             <MessageThread 
-              messages={[
-                { id: "1", senderId: user?.uid || "client1", senderRole: "client", text: "Hi, I need help updating my MX records.", timestamp: new Date(Date.now() - 3600000), readBy: ["admin"] },
-                { id: "2", senderId: "admin", senderRole: "staff", text: "Hello! Please send a screenshot of your current GoDaddy DNS settings.", timestamp: new Date(), readBy: [] },
-              ]} 
+              messages={messages} 
               currentUserId={user?.uid || ""} 
             />
             

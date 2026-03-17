@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import { PortalSidebar } from "@/components/layout/portal-sidebar";
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
-  const { user, isClient, loading } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {

@@ -8,6 +8,8 @@ class IOManager {
     private masterHandlerBound: (key: Buffer) => void;
     private _lastActivity: number = Date.now();
     private lastFocusTime: number = 0;
+    private pointerMode: 'unknown' | 'mouse' | 'touchpad' = 'unknown';
+    private pointerDetectStarted: boolean = false;
 
     constructor() {
         this.masterHandlerBound = this.masterHandler.bind(this);
@@ -27,6 +29,8 @@ class IOManager {
         }
         process.stdin.setEncoding('utf8');
         process.stdin.resume();
+
+        this.startPointerDetection();
 
         // Ensure we don't attach multiple times
         process.stdin.off('data', this.masterHandlerBound);
@@ -98,23 +102,40 @@ class IOManager {
             const type = match[4]; // M = Press, m = Release
 
             if (type === 'M') {
-                // Click Handling: Middle (1) only -> Enter
-                if (button === 1) {
+                // Wheel handling
+                if (button === 64) {
+                    const upKey = '\u001B[A';
+                    if (this.activeConsumer) this.activeConsumer(Buffer.from(upKey), upKey);
+                    continue;
+                }
+                if (button === 65) {
+                    const downKey = '\u001B[B';
+                    if (this.activeConsumer) this.activeConsumer(Buffer.from(downKey), downKey);
+                    continue;
+                }
+
+                const normalized = button & 3; // 0=left,1=middle,2=right
+                if (normalized === 1 && this.pointerMode !== 'mouse') {
+                    // If we see a middle click, it's almost certainly a mouse
+                    this.pointerMode = 'mouse';
+                }
+
+                const isTouchpad = this.pointerMode === 'touchpad';
+
+                // Click Handling: Middle always -> Enter
+                if (normalized === 1) {
                     // Ignore click if it happened immediately after gaining focus (within 100ms)
                     if (Date.now() - this.lastFocusTime > 100) {
                         const enterKey = '\r';
                         if (this.activeConsumer) this.activeConsumer(Buffer.from(enterKey), enterKey);
                     }
                 }
-                // Scroll Up (64) -> Up Arrow
-                else if (button === 64) {
-                    const upKey = '\u001B[A';
-                    if (this.activeConsumer) this.activeConsumer(Buffer.from(upKey), upKey);
-                }
-                // Scroll Down (65) -> Down Arrow
-                else if (button === 65) {
-                    const downKey = '\u001B[B';
-                    if (this.activeConsumer) this.activeConsumer(Buffer.from(downKey), downKey);
+                // Touchpad only: Left/Right click -> Enter
+                else if (isTouchpad && (normalized === 0 || normalized === 2)) {
+                    if (Date.now() - this.lastFocusTime > 100) {
+                        const enterKey = '\r';
+                        if (this.activeConsumer) this.activeConsumer(Buffer.from(enterKey), enterKey);
+                    }
                 }
             }
         }
@@ -178,6 +199,64 @@ class IOManager {
      */
     disableMouse() {
         process.stdout.write('\x1b[?1000l\x1b[?1006l\x1b[?1015l\x1b[?1004l');
+    }
+
+    private startPointerDetection() {
+        if (this.pointerDetectStarted) return;
+        this.pointerDetectStarted = true;
+
+        const forced = (process.env.VISHNU_POINTER_DEVICE || '').toLowerCase();
+        if (forced === 'mouse' || forced === 'touchpad') {
+            this.pointerMode = forced as 'mouse' | 'touchpad';
+            return;
+        }
+
+        if (process.platform !== 'win32') {
+            this.pointerMode = 'mouse';
+            return;
+        }
+
+        void import('child_process')
+            .then(({ exec }) => {
+                const cmd = 'powershell -NoProfile -Command "Get-CimInstance Win32_PointingDevice | Select-Object -ExpandProperty Name"';
+                exec(cmd, (err, stdout) => {
+                    if (err || !stdout) {
+                        this.pointerMode = 'mouse';
+                        return;
+                    }
+
+                    const names = stdout
+                        .split(/\r?\n/)
+                        .map(line => line.trim())
+                        .filter(Boolean);
+
+                    const touchpadKeywords = ['touchpad', 'trackpad', 'precision', 'synaptics', 'elan', 'alps', 'clickpad'];
+                    const mouseKeywords = ['mouse', 'trackball', 'trackpoint'];
+
+                    let touchpadFound = false;
+                    let mouseFound = false;
+
+                    for (const name of names) {
+                        const lowered = name.toLowerCase();
+                        if (touchpadKeywords.some(k => lowered.includes(k))) touchpadFound = true;
+                        if (mouseKeywords.some(k => lowered.includes(k)) && !lowered.includes('touchpad')) mouseFound = true;
+                    }
+
+                    if (touchpadFound && !mouseFound) {
+                        this.pointerMode = 'touchpad';
+                    } else if (touchpadFound && mouseFound) {
+                        // Mixed devices: start touchpad, but switch to mouse if a middle click is seen
+                        this.pointerMode = 'touchpad';
+                    } else if (mouseFound) {
+                        this.pointerMode = 'mouse';
+                    } else {
+                        this.pointerMode = 'mouse';
+                    }
+                });
+            })
+            .catch(() => {
+                this.pointerMode = 'mouse';
+            });
     }
 }
 

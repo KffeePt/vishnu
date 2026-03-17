@@ -287,14 +287,19 @@ async function handleCLIArgs(): Promise<boolean> {
 
   // If we get here and there are options invoked
   if (Object.keys(options).length > 0) {
-      const runWithPause = async (task: string, fn: () => Promise<void>) => {
+      const runWithPause = async (task: string, fn: () => Promise<any>) => {
           const chalk = (await import('chalk')).default;
           const inquirer = (await import('inquirer')).default;
           try {
-              await fn();
+              const result = await fn();
+              if (result === false) {
+                  throw new Error(`${task} reported failure.`);
+              }
               console.log(chalk.green(`\n✅ ${task} finished successfully.`));
           } catch (e: any) {
-              console.error(chalk.red(`\n❌ ${task} failed: ${e.message}`));
+              const message = e?.message || String(e);
+              console.error(chalk.red(`\n❌ ${task} failed: ${message}`));
+              if (e?.stack) console.error(chalk.gray(e.stack));
           }
           console.log(chalk.gray('\n=== COMMAND COMPLETED ==='));
           await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to exit...' }]);
@@ -399,23 +404,21 @@ async function handleCLIArgs(): Promise<boolean> {
       }
       if (options.runMaintDeployPrep) {
           await runWithPause('Maint Deploy Prep', async () => {
-              const { registry } = await import('./core/registry');
-              const handler = registry.getScript('maintDeployPrep');
-              if (handler) await handler();
-              else console.log(chalk.red('Maintenance handler "maintDeployPrep" not found.'));
+              const { runDeployPrepCore } = await import('./config/menu-map');
+              return await runDeployPrepCore();
           });
           return true;
       }
       if (options.runRelease) {
           await runWithPause('CI/CD Release Deploy', async () => {
               const { SessionLoader } = await import('./managers/session-loader');
-              const { doRunRelease } = await import('./config/menu-map');
+              const { runReleasePipeline } = await import('./config/menu-map');
 
               // Load project session context
               await SessionLoader.load(process.cwd());
               
               // Run the release logic
-              await doRunRelease();
+              return await runReleasePipeline();
           });
           return true;
       }

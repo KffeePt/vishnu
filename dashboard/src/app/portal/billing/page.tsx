@@ -1,12 +1,9 @@
 "use client";
 
-import { useAuth } from "@/components/providers/auth-provider";
 import { CreditCard, Receipt, Activity, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function BillingPage() {
-  const { user } = useAuth();
-
   return (
     <div className="flex-1 space-y-8 p-8 pt-6">
       <div>

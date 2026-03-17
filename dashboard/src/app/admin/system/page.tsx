@@ -29,8 +29,8 @@ export default function AdminSystemPage() {
         }
         const data = await res.json();
         setSysInfo(data);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to fetch system diagnostics");
       } finally {
         setLoading(false);
       }

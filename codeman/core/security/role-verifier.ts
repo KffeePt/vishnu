@@ -9,11 +9,21 @@ export function inferRoleFromClaims(params: {
     email?: string | null;
 }): RoleVerdict {
     const { claims } = params;
-    const isOwner = claims.owner === true;
+    const isOwner = claims.owner === true || claims.role === 'owner';
+    const isAdmin = claims.admin === true || claims.role === 'admin';
+    const isStaff = claims.staff === true || claims.role === 'staff';
     const isDeveloper = claims.dev === true || claims.role === 'dev';
 
     if (isOwner) {
         return { role: 'owner', isOwner: true, isDeveloper: true };
+    }
+
+    if (isAdmin) {
+        return { role: 'admin', isOwner: false, isDeveloper };
+    }
+
+    if (isStaff) {
+        return { role: 'staff', isOwner: false, isDeveloper };
     }
 
     if (claims.role) {

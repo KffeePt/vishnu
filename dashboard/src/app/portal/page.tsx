@@ -1,11 +1,8 @@
 "use client";
 
-import { useAuth } from "@/components/providers/auth-provider";
 import { Package, CreditCard, HeartPulse, Activity } from "lucide-react";
 
 export default function PortalOverviewPage() {
-  const { user } = useAuth();
-
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       <div className="flex items-center justify-between space-y-2">
