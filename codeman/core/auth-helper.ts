@@ -57,10 +57,14 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
             const isRaw = !!(process.stdin.isTTY && process.stdin.isRaw);
             if (isRaw) {
                 const { List } = await import('../components/list');
+                const { io } = await import('../core/io');
+                // Ensure mouse input works even when schema menus temporarily disable it
+                io.enableMouse();
                 bypassChoice = await List('Owner bypass (Vishnu project only)', [
                     { name: 'Bypass auth using Vishnu owner', value: 'bypass' },
                     { name: 'Continue normal auth', value: 'continue' }
                 ]);
+                io.disableMouse();
             } else {
                 const inquirer = (await import('inquirer')).default;
                 const answer = await inquirer.prompt([{

@@ -34,6 +34,12 @@ export class ProcessRegistryManager {
             '.shiva.lock',
             '.codeman-registry.json'
         ];
+        if (fs.existsSync(path.join(projectRoot, 'bun.lock'))) {
+            linesToAdd.push('bun.lock');
+        }
+        if (fs.existsSync(path.join(projectRoot, 'bun.lockb'))) {
+            linesToAdd.push('bun.lockb');
+        }
 
         let modified = false;
         let hasHeader = content.includes('# Codeman Specific');

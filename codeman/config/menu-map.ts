@@ -48,6 +48,7 @@ export { SettingsMenuDef } from '../menus/definitions/settings-menu';
 export { UpdateMenuDef } from '../menus/definitions/update-menu';
 export { MaintenanceMenuDef } from '../menus/definitions/maintenance-menu';
 export { BranchingMenuDef } from '../menus/definitions/branching-menu';
+export { DocActionsMenuDef } from '../menus/definitions/doc-actions-menu';
 
 // Export Definitions
 // (Duplicate exports removed)
@@ -61,12 +62,14 @@ import { UpdateMenuDef } from '../menus/definitions/update-menu';
 import { createSchemaMenu } from '../core/schema-factory';
 import { registry } from '../core/registry';
 import { JobsMenuDef } from '../menus/definitions/jobs-menu';
+import { DocActionsMenuDef } from '../menus/definitions/doc-actions-menu';
 
 registry.register(createSchemaMenu(SettingsMenuDef));
 registry.register(createSchemaMenu(UpdateMenuDef));
 registry.register(createSchemaMenu(NextJsTestsMenuDef));
 registry.register(createSchemaMenu(AdminGenMenuDef));
 registry.register(createSchemaMenu(JobsMenuDef));
+registry.register(createSchemaMenu(DocActionsMenuDef));
 import { MaintenanceMenuDef } from '../menus/definitions/maintenance-menu';
 import { BranchingMenuDef } from '../menus/definitions/branching-menu';
 import { MaintDeployMenuDef } from '../menus/definitions/maint-deploy-menu';
@@ -134,6 +137,16 @@ registerScript('updateRepair', async () => {
     console.log(chalk.yellow('\n🛠️  Repairing CodeMan (Force Pull/Reset)...'));
     const rootDir = process.cwd();
     console.log(chalk.gray(`Target: ${rootDir}`));
+    try {
+        const { execSync } = await import('child_process');
+        const remote = execSync('git remote get-url origin', { cwd: rootDir, stdio: 'pipe' }).toString().trim();
+        if (remote) {
+            console.log(chalk.gray(`Remote: ${remote}`));
+            if (remote.startsWith('https://')) {
+                console.log(chalk.yellow('Note: Remote is HTTPS. SSH remotes are supported if configured.'));
+            }
+        }
+    } catch { }
 
     const run = (cmd: string, args: string[]) => new Promise<boolean>((resolve) => {
         const child = spawn(cmd, args, { stdio: 'inherit', shell: true, cwd: rootDir });
@@ -171,6 +184,16 @@ registerScript('updateSync', async () => {
     console.log(chalk.yellow('\n🔄 Syncing CodeMan (Push & Pull)...'));
     const rootDir = process.cwd();
     console.log(chalk.gray(`Target: ${rootDir}`));
+    try {
+        const { execSync } = await import('child_process');
+        const remote = execSync('git remote get-url origin', { cwd: rootDir, stdio: 'pipe' }).toString().trim();
+        if (remote) {
+            console.log(chalk.gray(`Remote: ${remote}`));
+            if (remote.startsWith('https://')) {
+                console.log(chalk.yellow('Note: Remote is HTTPS. SSH remotes are supported if configured.'));
+            }
+        }
+    } catch { }
 
     const run = (cmd: string, args: string[]) => new Promise<boolean>((resolve) => {
         const child = spawn(cmd, args, { stdio: 'inherit', shell: true, cwd: rootDir });
@@ -431,6 +454,36 @@ registerScript('run-shiva', async () => {
     return 'dev-dojo';
 });
 
+registerScript('doc-actions', async () => {
+    const { runDocActions } = await import('../menus/interactive/doc-actions');
+    await runDocActions();
+    return 'doc-actions-menu';
+});
+
+registerScript('doc-open-pending', async () => {
+    const { openPendingIndex } = await import('../menus/interactive/doc-actions');
+    await openPendingIndex();
+    return 'doc-actions-menu';
+});
+
+registerScript('doc-show-recent', async () => {
+    const { showRecentDocs } = await import('../menus/interactive/doc-actions');
+    await showRecentDocs();
+    return 'doc-actions-menu';
+});
+
+registerScript('doc-manage', async () => {
+    const { manageDocNodes } = await import('../menus/interactive/doc-actions');
+    await manageDocNodes();
+    return 'doc-actions-menu';
+});
+
+registerScript('doc-activity-panel', async () => {
+    const { runDocActivityPanel } = await import('../menus/interactive/doc-actions');
+    await runDocActivityPanel();
+    return 'doc-actions-menu';
+});
+
 registerScript('dev-dojo-mode', async () => {
     const chalk = (await import('chalk')).default;
     const { ProcessManager } = await import('../core/process-manager');
@@ -438,10 +491,41 @@ registerScript('dev-dojo-mode', async () => {
     const { state } = await import('../core/state');
     const path = await import('path');
     const fs = await import('fs');
+    const { runDevServer } = await import('../commands/dev-server');
 
     console.log(chalk.magenta('\n🥷  Entering SAMURAI MODE (Dev Environment)...'));
 
     const projectRoot = state.project.rootPath;
+    const projectType = state.project.type;
+    if (projectType === 'nextjs') {
+        // 1. Launch Firebase Emulators (if configured)
+        const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
+        if (fs.existsSync(firebaseJsonPath)) {
+            console.log(chalk.blue('🔥 Launching Firebase Emulators...'));
+            await ProcessManager.spawnDetachedWindow('Firebase Emulators', 'firebase emulators:start', projectRoot);
+        } else {
+            console.log(chalk.gray('ℹ️  No firebase.json found. Skipping Emulators.'));
+        }
+
+        // 2. Launch Next.js Dev Server
+        console.log(chalk.blue('🌐 Launching Next.js Dev Server...'));
+        try {
+            const current = process.cwd();
+            if (current !== projectRoot) {
+                process.chdir(projectRoot);
+            }
+            await runDevServer();
+        } catch (e: any) {
+            console.log(chalk.red(`Failed to start dev server: ${e?.message || e}`));
+        }
+
+        // 3. Run Shiva (The AI)
+        console.log(chalk.magenta('🔮 Summoning Shiva...'));
+        const { runShivaScript } = await import('../commands/shiva');
+        await runShivaScript(projectRoot);
+
+        return 'dev-dojo';
+    }
 
     // 1. Launch Firebase Emulators
     const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
@@ -494,6 +578,41 @@ registerScript('dev-dojo-mode', async () => {
     const { runShivaScript } = await import('../commands/shiva');
     await runShivaScript(projectRoot);
 
+    return 'dev-dojo';
+});
+
+registerScript('openEmulatorUI', async () => {
+    const chalk = (await import('chalk')).default;
+    const path = await import('path');
+    const fs = await import('fs');
+    const open = (await import('open')).default;
+    const inquirer = (await import('inquirer')).default;
+    const { state } = await import('../core/state');
+
+    const projectRoot = state.project.rootPath || process.cwd();
+    const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
+    let port = 4000;
+
+    if (fs.existsSync(firebaseJsonPath)) {
+        try {
+            const content = fs.readFileSync(firebaseJsonPath, 'utf-8');
+            const config = JSON.parse(content);
+            const uiPort = config?.emulators?.ui?.port;
+            if (typeof uiPort === 'number') {
+                port = uiPort;
+            }
+        } catch { }
+    }
+
+    const url = `http://127.0.0.1:${port}`;
+    console.log(chalk.cyan(`Opening Emulator UI: ${url}`));
+    try {
+        void open(url, { wait: false, newInstance: true });
+    } catch {
+        console.log(chalk.yellow('Could not auto-open browser. Please open the URL manually.'));
+    }
+
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
     return 'dev-dojo';
 });
 

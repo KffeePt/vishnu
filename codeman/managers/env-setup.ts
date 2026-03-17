@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
 import { state } from '../core/state';
-import { buildEnvTemplate, mergeEnvValues } from '../core/project/env-template';
+import { buildEnvTemplate, buildNextPublicFirebaseBlock, mergeEnvValues } from '../core/project/env-template';
 
 export class EnvSetupManager {
     static async verifyAndSetupEnv(forceValidations = false): Promise<boolean> {
@@ -13,6 +13,14 @@ export class EnvSetupManager {
 
         // 1. Determine Intent
         let cloudEnabled = false;
+
+        // Detect project type (used for auto-setup)
+        const isFlutterProject = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
+        const isNextProject =
+            fs.existsSync(path.join(process.cwd(), 'next.config.js')) ||
+            fs.existsSync(path.join(process.cwd(), 'next.config.mjs')) ||
+            fs.existsSync(path.join(process.cwd(), 'next.config.ts'));
+        const isNextOrFlutter = isFlutterProject || isNextProject;
 
         // Check for explicit "cloud_features" flag if configuration exists
         if (fs.existsSync(localConfigPath)) {
@@ -30,15 +38,15 @@ export class EnvSetupManager {
         // Force validation if explicitly requested (e.g. via menu)
         if (forceValidations) cloudEnabled = true;
 
-        // Update Global State
+        // Update Global State (may be overridden below for Next/Flutter auto-setup)
         state.cloudFeaturesEnabled = cloudEnabled;
 
-        if (!cloudEnabled) {
+        // If not cloud-enabled and not a Next.js/Flutter project, skip setup
+        if (!cloudEnabled && !isNextOrFlutter) {
             return false; // Valid (no cloud needed)
         }
 
         // 2. Check for missing configuration (Strict Check: Values must exist)
-        const isFlutterProject = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
         const missing = [];
         let envContent = '';
         if (fs.existsSync(envPath)) {
@@ -124,7 +132,7 @@ export class EnvSetupManager {
         }
 
         // Generate .env
-        const newEnvContent = buildEnvTemplate({
+        const envValues = {
             GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
             FIREBASE_API_KEY: apiKey,
             FIREBASE_AUTH_DOMAIN: authDomain,
@@ -134,26 +142,32 @@ export class EnvSetupManager {
             FIREBASE_APP_ID: appId,
             FIREBASE_MEASUREMENT_ID: measurementId,
             GEMINI_API_KEY: geminiKey
-        });
+        };
+        let newEnvContent = buildEnvTemplate(envValues);
+        if (isNextProject) {
+            newEnvContent = `${newEnvContent}\n${buildNextPublicFirebaseBlock(envValues)}`;
+        }
 
         fs.writeFileSync(envPath, newEnvContent);
         console.log(chalk.green('✅ .env file generated successfully.'));
 
         // Generate .env.example (deduplicated template)
         const envExamplePath = path.join(process.cwd(), '.env.example');
-        const envExampleContent = buildEnvTemplate(
-            mergeEnvValues({}, {
-                GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
-                FIREBASE_API_KEY: apiKey,
-                FIREBASE_AUTH_DOMAIN: authDomain,
-                FIREBASE_PROJECT_ID: projectId,
-                FIREBASE_STORAGE_BUCKET: storageBucket,
-                FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
-                FIREBASE_APP_ID: appId,
-                FIREBASE_MEASUREMENT_ID: measurementId,
-                GEMINI_API_KEY: ''
-            })
-        );
+        const envExampleValues = mergeEnvValues({}, {
+            GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
+            FIREBASE_API_KEY: apiKey,
+            FIREBASE_AUTH_DOMAIN: authDomain,
+            FIREBASE_PROJECT_ID: projectId,
+            FIREBASE_STORAGE_BUCKET: storageBucket,
+            FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
+            FIREBASE_APP_ID: appId,
+            FIREBASE_MEASUREMENT_ID: measurementId,
+            GEMINI_API_KEY: ''
+        });
+        let envExampleContent = buildEnvTemplate(envExampleValues);
+        if (isNextProject) {
+            envExampleContent = `${envExampleContent}\n${buildNextPublicFirebaseBlock(envExampleValues)}`;
+        }
 
         fs.writeFileSync(envExamplePath, envExampleContent);
         console.log(chalk.green('✅ .env.example file generated successfully.'));

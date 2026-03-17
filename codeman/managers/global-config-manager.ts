@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import dotenv from 'dotenv';
+import { spawnSync } from 'child_process';
 
 export class GlobalConfigManager {
     private static envPath = path.join(os.homedir(), '.vishnu', '.env');
@@ -44,6 +45,34 @@ export class GlobalConfigManager {
         fs.writeFileSync(this.envPath, content.trim() + '\n');
 
         // Update current process env
+        process.env[key] = value;
+    }
+
+    public static setUserEnvVar(key: string, value: string) {
+        try {
+            if (process.platform === 'win32') {
+                const escaped = value.replace(/'/g, "''");
+                spawnSync('powershell', [
+                    '-NoProfile',
+                    '-Command',
+                    `[Environment]::SetEnvironmentVariable('${key}','${escaped}','User')`
+                ], { stdio: 'ignore' });
+            } else if (process.platform === 'darwin') {
+                spawnSync('launchctl', ['setenv', key, value], { stdio: 'ignore' });
+            } else {
+                const profilePath = path.join(os.homedir(), '.profile');
+                const line = `export ${key}=\"${value}\"`;
+                let content = fs.existsSync(profilePath) ? fs.readFileSync(profilePath, 'utf8') : '';
+                const regex = new RegExp(`^export\\s+${key}=.*$`, 'm');
+                if (regex.test(content)) {
+                    content = content.replace(regex, line);
+                } else {
+                    content = `${content.trim()}\n${line}\n`;
+                }
+                fs.writeFileSync(profilePath, content.trim() + '\n');
+            }
+        } catch { }
+
         process.env[key] = value;
     }
 }

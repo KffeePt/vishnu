@@ -53,6 +53,7 @@ export class GlobalKeyManager {
 
     public static setActive(key: string) {
         GlobalConfigManager.set('GEMINI_API_KEY', key);
+        GlobalConfigManager.setUserEnvVar('GEMINI_API_KEY', key);
     }
 
     public static getActive(): string | undefined {

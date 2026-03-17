@@ -352,6 +352,10 @@ async function resolveScaffoldTarget(targetPath: string): Promise<{ cwd?: string
 async function ensureCodemanGitignore(projectRoot: string) {
     const gitignorePath = path.join(projectRoot, '.gitignore');
     const entries = ['.codeman.lock', '.shiva.lock', '.codeman-registry.json'];
+    const bunLock = path.join(projectRoot, 'bun.lock');
+    const bunLockb = path.join(projectRoot, 'bun.lockb');
+    if (await fs.pathExists(bunLock)) entries.push('bun.lock');
+    if (await fs.pathExists(bunLockb)) entries.push('bun.lockb');
 
     let content = '';
     if (await fs.pathExists(gitignorePath)) {

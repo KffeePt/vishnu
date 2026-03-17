@@ -96,9 +96,11 @@ function renderDashboard(monitorPath: string, docsRoot: string) {
     output += "\n";
 
     // --- HEADER ---
-    const C_BUILDS = Colors.YELLOW;
-    const C_FIXES = Colors.MAGENTA;
     const C_TASKS = Colors.CYAN;
+    const C_PENDING = Colors.YELLOW;
+    const C_GIT = Colors.GREEN;
+    const C_AUDITS = Colors.MAGENTA;
+    const C_SPECS = Colors.BLUE;
     const RESET = Colors.ENDC;
 
     // Rainbow header
@@ -126,20 +128,34 @@ function renderDashboard(monitorPath: string, docsRoot: string) {
     output += `${Colors.CYAN}${" ".repeat(pPadding)}${monitoredPath}${Colors.ENDC}\n\n`;
 
     // --- FOLDER STATS ---
-    const buildPath = path.join(docsRoot, 'builds');
-    const fixesPath = path.join(docsRoot, 'fixes');
-    const tasksPath = path.join(docsRoot, 'archived_tasks');
+    const tasksPath = path.join(docsRoot, 'tasks');
+    const pendingPath = path.join(docsRoot, 'pending');
+    const gitPath = path.join(docsRoot, 'git');
+    const auditsPath = path.join(docsRoot, 'audits');
+    const specsPath = path.join(docsRoot, 'specs');
 
     const getStatus = (p: string) => fs.existsSync(p) ? `${Colors.GREEN}[FOUND]${RESET}` : `${Colors.RED}[MISSING]${RESET}`;
 
-    const buildsLabel = "Builds: ";
-    const fixesLabel = "   Fixes: ";
-    const tasksLabel = "   Tasks: ";
+    const tasksLabel = "Tasks: ";
+    const pendingLabel = "   Pending: ";
+    const gitLabel = "   Git: ";
+    const auditsLabel = "   Audits: ";
+    const specsLabel = "   Specs: ";
     // We strip ansi for length calc
-    const visibleLength = buildsLabel.length + 7 + fixesLabel.length + 7 + tasksLabel.length + 7; // [FOUND] is 7 chars
+    const visibleLength =
+        tasksLabel.length + 7 +
+        pendingLabel.length + 7 +
+        gitLabel.length + 7 +
+        auditsLabel.length + 7 +
+        specsLabel.length + 7; // [FOUND] is 7 chars
     const statusPadding = Math.max(0, Math.floor((columns - visibleLength) / 2));
 
-    const statusLine = `${C_BUILDS}${buildsLabel}${getStatus(buildPath)}${C_FIXES}${fixesLabel}${getStatus(fixesPath)}${C_TASKS}${tasksLabel}${getStatus(tasksPath)}`;
+    const statusLine =
+        `${C_TASKS}${tasksLabel}${getStatus(tasksPath)}` +
+        `${C_PENDING}${pendingLabel}${getStatus(pendingPath)}` +
+        `${C_GIT}${gitLabel}${getStatus(gitPath)}` +
+        `${C_AUDITS}${auditsLabel}${getStatus(auditsPath)}` +
+        `${C_SPECS}${specsLabel}${getStatus(specsPath)}`;
     output += " ".repeat(statusPadding) + statusLine + "\n\n";
 
     output += printSeparator(columns);

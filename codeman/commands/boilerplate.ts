@@ -14,6 +14,48 @@ import { MenuConfig, ScreenFactory } from '../utils/menu-system';
 export type BoilerplateType = 'component' | 'static-route' | 'page-wrapper' | 'api-route' | 'protected-route' | 'unit-test' | 'e2e-test';
 import { findRelatedFiles } from '../utils/related-items';
 
+async function isFirebaseProjectForTests(): Promise<boolean> {
+    const projectRoot = process.cwd();
+    if (await fs.pathExists(path.join(projectRoot, 'firebase.json'))) return true;
+    if (await fs.pathExists(path.join(projectRoot, '.firebaserc'))) return true;
+
+    try {
+        const pkg = await fs.readJson(path.join(projectRoot, 'package.json'));
+        const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
+        if (deps.firebase || deps['firebase-admin'] || deps['@firebase/rules-unit-testing'] || deps['@firebase/testing']) {
+            return true;
+        }
+    } catch { }
+
+    const envPath = path.join(projectRoot, '.env');
+    if (await fs.pathExists(envPath)) {
+        try {
+            const envContent = await fs.readFile(envPath, 'utf8');
+            if (/FIREBASE_PROJECT_ID\s*=/m.test(envContent) || /NEXT_PUBLIC_FIREBASE_PROJECT_ID\s*=/m.test(envContent)) {
+                return true;
+            }
+        } catch { }
+    }
+
+    return false;
+}
+
+function getFirebaseEmulatorSnippet(): string {
+    return `
+const FIREBASE_EMULATORS = {
+    auth: { host: '127.0.0.1', port: 9099 },
+    firestore: { host: '127.0.0.1', port: 8080 },
+    database: { host: '127.0.0.1', port: 9000 },
+    storage: { host: '127.0.0.1', port: 9199 }
+};
+
+process.env.FIRESTORE_EMULATOR_HOST ??= \`\${FIREBASE_EMULATORS.firestore.host}:\${FIREBASE_EMULATORS.firestore.port}\`;
+process.env.FIREBASE_AUTH_EMULATOR_HOST ??= \`\${FIREBASE_EMULATORS.auth.host}:\${FIREBASE_EMULATORS.auth.port}\`;
+process.env.FIREBASE_DATABASE_EMULATOR_HOST ??= \`\${FIREBASE_EMULATORS.database.host}:\${FIREBASE_EMULATORS.database.port}\`;
+process.env.FIREBASE_STORAGE_EMULATOR_HOST ??= \`\${FIREBASE_EMULATORS.storage.host}:\${FIREBASE_EMULATORS.storage.port}\`;
+`.trim();
+}
+
 // --- Generators (Legacy wrappers to be converted later if needed) ---
 export async function handleCreateComponent() {
     const { componentName } = await inquirer.prompt([
@@ -847,6 +889,9 @@ export async function createUnitTest(system: any) {
     const spinner = createSpinner(`Generating Unit Test for ${componentName}...`).start();
 
     try {
+        const useFirebase = await isFirebaseProjectForTests();
+        const firebaseSnippet = useFirebase ? `\n${getFirebaseEmulatorSnippet()}\n` : '';
+
         // Determine sub-directory for tests based on component location
         const relativeToComponents = path.relative(path.join(process.cwd(), 'components'), path.dirname(targetPath));
         const testsDir = path.join(process.cwd(), 'tests', 'components', relativeToComponents);
@@ -873,6 +918,7 @@ export async function createUnitTest(system: any) {
             content = `import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import ${pascalName} from '${importPath}';
+${firebaseSnippet}
 
 // Mock Next.js hooks
 vi.mock('next/navigation', () => ({
@@ -893,6 +939,7 @@ describe('${pascalName} Page', () => {
             content = `import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ${pascalName} } from '${importPath}'; // Verify named vs default export manually if needed
+${firebaseSnippet}
 
 describe('${pascalName} Component', () => {
     it('should render successfully', () => {
@@ -959,6 +1006,9 @@ export async function createE2ETest(system: any) {
     const spinner = createSpinner('Generating E2E Test...').start();
 
     try {
+        const useFirebase = await isFirebaseProjectForTests();
+        const firebaseSnippet = useFirebase ? `\n${getFirebaseEmulatorSnippet()}\n` : '';
+
         const e2eDir = path.join(process.cwd(), 'tests', 'e2e');
         await fs.ensureDir(e2eDir);
 
@@ -970,6 +1020,7 @@ export async function createE2ETest(system: any) {
         }
 
         const content = `import { test, expect } from '@playwright/test';
+${firebaseSnippet}
 
 test.describe('${specTitle} Page', () => {
     test.beforeEach(async ({ page }) => {

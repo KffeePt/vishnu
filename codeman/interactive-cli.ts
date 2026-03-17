@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
+import { buildEnvTemplate, buildNextPublicFirebaseBlock } from './core/project/env-template';
 import { registry } from './core/registry';
 import { Engine } from './core/engine';
 // Cleaned Imports
@@ -56,6 +57,12 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
 
   const localConfigPath = path.join(process.cwd(), '.codeman.json');
   const envPath = path.join(process.cwd(), '.env');
+  const isFlutterProject = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
+  const isNextProject =
+    fs.existsSync(path.join(process.cwd(), 'next.config.js')) ||
+    fs.existsSync(path.join(process.cwd(), 'next.config.mjs')) ||
+    fs.existsSync(path.join(process.cwd(), 'next.config.ts'));
+  const isNextOrFlutter = isFlutterProject || isNextProject;
 
   // 1. Determine Intent
   let cloudEnabled = false; // Use a temporary variable for determination
@@ -83,9 +90,9 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     return false;
   }
 
-  // 2. If Cloud Features are NOT enabled, we SKIP validation.
+  // 2. If Cloud Features are NOT enabled and not a Next.js/Flutter project, we SKIP validation.
   // This enables "Custom Mode" / "Unknown Project" to work without setup.
-  if (!cloudEnabled) {
+  if (!cloudEnabled && !isNextOrFlutter) {
     return false;
   }
 
@@ -147,22 +154,21 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     const measurementId = clientContent.match(/measurementId: "(.*)"/)?.[1] || '';
 
     // Generate .env
-    const envContent = `
-# Admin Setup
-GOOGLE_APPLICATION_CREDENTIALS=admin-sdk.json
-
-# Firebase Client
-FIREBASE_API_KEY=${apiKey}
-FIREBASE_AUTH_DOMAIN=${authDomain}
-FIREBASE_PROJECT_ID=${projectId}
-FIREBASE_STORAGE_BUCKET=${storageBucket}
-FIREBASE_MESSAGING_SENDER_ID=${messagingSenderId}
-FIREBASE_APP_ID=${appId}
-FIREBASE_MEASUREMENT_ID=${measurementId}
-
-# AI
-GEMINI_API_KEY=${geminiKey}
-`.trim();
+    const envValues = {
+      GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
+      FIREBASE_API_KEY: apiKey,
+      FIREBASE_AUTH_DOMAIN: authDomain,
+      FIREBASE_PROJECT_ID: projectId,
+      FIREBASE_STORAGE_BUCKET: storageBucket,
+      FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
+      FIREBASE_APP_ID: appId,
+      FIREBASE_MEASUREMENT_ID: measurementId,
+      GEMINI_API_KEY: geminiKey
+    };
+    let envContent = buildEnvTemplate(envValues).trim();
+    if (isNextProject) {
+      envContent = `${envContent}\n\n${buildNextPublicFirebaseBlock(envValues).trim()}`;
+    }
 
     fs.writeFileSync(envPath, envContent);
     console.log(chalk.green('✅ .env file generated successfully.'));
@@ -190,7 +196,6 @@ GEMINI_API_KEY=${geminiKey}
   }
 
   // Existing check logic for when .env exists (and cloud is enabled)
-  const isFlutterProject = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
 
   const missing = [];
   if (!isFlutterProject) {
