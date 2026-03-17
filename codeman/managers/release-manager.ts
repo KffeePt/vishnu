@@ -124,6 +124,13 @@ export class ReleaseManager {
                         return false;
                     }
 
+                    try {
+                        await this.execPromise(`git merge-base --is-ancestor ${version} HEAD`, projectRoot);
+                    } catch {
+                        console.log(chalk.red(`Cannot overwrite ${version}: current HEAD is not a descendant of that tag.`));
+                        return false;
+                    }
+
                     await this.deleteTag(projectRoot, version);
                 }
             }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/components/providers/auth-provider";
-import { MessageThread } from "@/components/chat/message-thread";
+import { MessageThread, Message } from "@/components/chat/message-thread";
 import { MessageInput } from "@/components/chat/message-input";
 import { Button } from "@/components/ui/button";
 import { Plus, MessageSquare } from "lucide-react";
@@ -22,7 +22,7 @@ export default function ClientSupportPage() {
 
   const activeThread = mockThreads.find(t => t.id === activeThreadId);
 
-  const messages = [
+  const messages: Message[] = [
     { id: "1", senderId: user?.uid || "client1", senderRole: "client", text: "Hi, I need help updating my MX records.", timestamp: new Date(baseTime.getTime() - 3600000), readBy: ["admin"] },
     { id: "2", senderId: "admin", senderRole: "staff", text: "Hello! Please send a screenshot of your current GoDaddy DNS settings.", timestamp: baseTime, readBy: [] },
   ];

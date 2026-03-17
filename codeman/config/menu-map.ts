@@ -1386,10 +1386,15 @@ async function detectNodeRunner(projectRoot: string): Promise<'npm' | 'bun'> {
     return 'npm';
 }
 
-async function runNodeScript(projectRoot: string, scriptName: string): Promise<boolean> {
+async function runNodeScript(projectRoot: string, scriptName: string, requireScript: boolean = false): Promise<boolean> {
     const pkgPath = path.join(projectRoot, 'package.json');
     if (!fs.existsSync(pkgPath)) {
-        console.log(chalk.gray(`(No package.json found. Skipping ${scriptName}.)`));
+        const msg = `(No package.json found for "${scriptName}".)`;
+        if (requireScript) {
+            console.log(chalk.red(msg));
+            return false;
+        }
+        console.log(chalk.gray(`${msg} Skipping.`));
         return true;
     }
 
@@ -1397,12 +1402,22 @@ async function runNodeScript(projectRoot: string, scriptName: string): Promise<b
     try {
         pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
     } catch {
-        console.log(chalk.yellow(`Could not parse package.json. Skipping ${scriptName}.`));
+        const msg = `Could not parse package.json for "${scriptName}".`;
+        if (requireScript) {
+            console.log(chalk.red(msg));
+            return false;
+        }
+        console.log(chalk.yellow(`${msg} Skipping.`));
         return true;
     }
 
     if (!pkg.scripts || !pkg.scripts[scriptName]) {
-        console.log(chalk.gray(`(No "${scriptName}" script found. Skipping.)`));
+        const msg = `(No "${scriptName}" script found.)`;
+        if (requireScript) {
+            console.log(chalk.red(msg));
+            return false;
+        }
+        console.log(chalk.gray(`${msg} Skipping.`));
         return true;
     }
 
@@ -1426,7 +1441,16 @@ async function runReleaseTests(projectRoot: string, projectType: string): Promis
         return await BuildManager.runTests(projectRoot);
     }
 
-    return await runNodeScript(projectRoot, 'test');
+    const testsOk = await runNodeScript(projectRoot, 'test');
+    if (!testsOk) return false;
+
+    const dashboardRoot = path.join(projectRoot, 'dashboard');
+    if (fs.existsSync(path.join(dashboardRoot, 'package.json'))) {
+        const lintOk = await runNodeScript(dashboardRoot, 'lint');
+        if (!lintOk) return false;
+    }
+
+    return true;
 }
 
 async function runReleaseBuild(projectRoot: string, projectType: string): Promise<boolean> {
@@ -1451,15 +1475,24 @@ async function runReleaseBuild(projectRoot: string, projectType: string): Promis
         return true;
     }
 
+    let buildOk = true;
     if (pkg.scripts?.build) {
-        return await runNodeScript(projectRoot, 'build');
+        buildOk = await runNodeScript(projectRoot, 'build', true);
+    } else if (pkg.scripts?.['build:verify']) {
+        buildOk = await runNodeScript(projectRoot, 'build:verify', true);
+    } else {
+        console.log(chalk.red('(No "build" or "build:verify" script found. Failing release build.)'));
+        buildOk = false;
     }
 
-    if (pkg.scripts?.['build:verify']) {
-        return await runNodeScript(projectRoot, 'build:verify');
+    if (!buildOk) return false;
+
+    const dashboardRoot = path.join(projectRoot, 'dashboard');
+    if (fs.existsSync(path.join(dashboardRoot, 'package.json'))) {
+        const dashBuildOk = await runNodeScript(dashboardRoot, 'build', true);
+        if (!dashBuildOk) return false;
     }
 
-    console.log(chalk.gray('(No build script found. Skipping.)'));
     return true;
 }
 
@@ -1487,6 +1520,70 @@ export async function runReleasePipeline(): Promise<boolean> {
         }).catch(() => '');
 
         return stdout.split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+    };
+
+    const fetchGitTags = async (): Promise<void> => {
+        await new Promise<void>((resolve) => {
+            exec('git fetch --tags --prune --force', { cwd: projectRoot }, () => resolve());
+        });
+    };
+
+    const getGitTags = async (): Promise<string[]> => {
+        const stdout = await new Promise<string>((resolve, reject) => {
+            exec('git tag -l', { cwd: projectRoot }, (err, out) => {
+                if (err) return reject(err);
+                resolve(out || '');
+            });
+        }).catch(() => '');
+
+        return stdout.split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+    };
+
+    const getRemoteTags = async (): Promise<string[]> => {
+        const stdout = await new Promise<string>((resolve, reject) => {
+            exec('git ls-remote --tags origin', { cwd: projectRoot }, (err, out) => {
+                if (err) return reject(err);
+                resolve(out || '');
+            });
+        }).catch(() => '');
+
+        const tags = stdout
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(Boolean)
+            .map(line => line.split('\t')[1])
+            .filter(Boolean)
+            .map(ref => ref.replace(/^refs\/tags\//, ''))
+            .filter(tag => !tag.endsWith('^{}'));
+
+        return tags;
+    };
+
+    const compareVersions = (a: string, b: string): number => {
+        const aParts = a.split('.').map(Number);
+        const bParts = b.split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+            const diff = (aParts[i] || 0) - (bParts[i] || 0);
+            if (diff !== 0) return diff;
+        }
+        return 0;
+    };
+
+    const getLatestBaseVersion = (tags: string[]): string | null => {
+        const versions = tags
+            .map((tag) => {
+                const match = /^v(\d+)\.(\d+)\.(\d+)(?:-[a-z]+\.?\d+)?$/.exec(tag);
+                if (!match) return null;
+                return {
+                    value: `${match[1]}.${match[2]}.${match[3]}`,
+                    parts: [Number(match[1]), Number(match[2]), Number(match[3])]
+                };
+            })
+            .filter(Boolean) as { value: string; parts: number[] }[];
+
+        if (versions.length === 0) return null;
+        versions.sort((a, b) => a.parts[0] - b.parts[0] || a.parts[1] - b.parts[1] || a.parts[2] - b.parts[2]);
+        return versions[versions.length - 1].value;
     };
 
     const getLatestStableVersion = (tags: string[]): string | null => {
@@ -1520,21 +1617,26 @@ export async function runReleasePipeline(): Promise<boolean> {
         return Math.max(...numbers) + 1;
     };
 
-    const releaseTags = await getGhReleaseTags();
+    await fetchGitTags();
+    const ghTags = await getGhReleaseTags();
+    const gitTags = await getGitTags();
+    const remoteTags = await getRemoteTags();
+    const releaseTags = Array.from(new Set([...ghTags, ...gitTags, ...remoteTags]));
     const latestStable = getLatestStableVersion(releaseTags);
-    const exampleVersion = latestStable ?? '1.0.0';
+    const latestBase = getLatestBaseVersion(releaseTags);
+    const exampleVersion = latestBase ?? '1.0.0';
 
     // 1. Ask for Base Version
     const { baseVersionInput } = await inquirer.prompt([{
         type: 'input',
         name: 'baseVersionInput',
-        message: latestStable
+        message: latestBase
             ? `Enter Base Version (e.g., ${exampleVersion}) or leave blank for latest:`
             : `Enter Base Version (e.g., ${exampleVersion}):`,
         validate: (input: string) => {
             const trimmed = input.trim();
             if (trimmed === '') {
-                return latestStable ? true : 'No existing releases found. Enter X.Y.Z';
+                return latestBase ? true : 'No existing releases found. Enter X.Y.Z';
             }
             return /^v?\d+\.\d+\.\d+$/.test(trimmed) ? true : 'Invalid format. Use X.Y.Z';
         }
@@ -1552,8 +1654,42 @@ export async function runReleasePipeline(): Promise<boolean> {
         ]
     }]);
 
-    const cleanedBase = (baseVersionInput.trim() === '' ? latestStable : baseVersionInput.trim()) || exampleVersion;
+    const cleanedBase = (baseVersionInput.trim() === '' ? latestBase : baseVersionInput.trim()) || exampleVersion;
     const baseVersion = cleanedBase.startsWith('v') ? cleanedBase.slice(1) : cleanedBase;
+
+    if (latestStable) {
+        const cmp = compareVersions(baseVersion, latestStable);
+        if (cmp < 0) {
+            const olderTag = `v${baseVersion}`;
+            const tagExists = releaseTags.includes(olderTag);
+
+            if (!tagExists) {
+                console.log(chalk.red(`\n❌ ${baseVersion} is lower than latest ${latestStable}. Going backward is not allowed.`));
+                return false;
+            }
+
+            const { overwriteOlder } = await inquirer.prompt([{
+                type: 'confirm',
+                name: 'overwriteOlder',
+                message: `Version ${baseVersion} is older than latest ${latestStable}. Overwrite existing tag ${olderTag}?`,
+                default: false
+            }]);
+
+            if (!overwriteOlder) {
+                console.log(chalk.yellow('Aborted.'));
+                return false;
+            }
+
+            const canOverwrite = await new Promise<boolean>((resolve) => {
+                exec(`git merge-base --is-ancestor ${olderTag} HEAD`, { cwd: projectRoot }, (err) => resolve(!err));
+            });
+
+            if (!canOverwrite) {
+                console.log(chalk.red(`\n❌ Cannot overwrite ${olderTag}: current HEAD is not a descendant of that tag.`));
+                return false;
+            }
+        }
+    }
 
     let tag = `v${baseVersion}`;
     let pubspecVersion = baseVersion;
@@ -1592,14 +1728,25 @@ export async function runReleasePipeline(): Promise<boolean> {
     }
 
     try {
+        console.log(chalk.cyan('\nPreflight: GitHub CLI Auth'));
+        const hasGh = await ProcessUtils.checkCommand('gh');
+        if (!hasGh) {
+            console.log(chalk.red('GitHub CLI (gh) not found. Install it or set GH_TOKEN.'));
+            return false;
+        }
+        const ghAuthed = await new Promise<boolean>((resolve) => {
+            exec('gh auth status', { cwd: projectRoot }, (err) => resolve(!err));
+        });
+        if (!ghAuthed) {
+            console.log(chalk.red('GitHub CLI not authenticated. Run "gh auth login" or set GH_TOKEN.'));
+            return false;
+        }
+
         if (projectType === 'flutter') {
             await ReleaseManager.setVersion(projectRoot, pubspecVersion);
         } else {
             console.log(chalk.gray('(Node version bump not implemented; relying on git tag)'));
         }
-
-        const tagSuccess = await ReleaseManager.gitCommitAndTag(projectRoot, tag);
-        if (!tagSuccess) return false;
 
         console.log(chalk.cyan('\nStep 1: Tests'));
         const testsOk = await runReleaseTests(projectRoot, projectType);
@@ -1614,6 +1761,9 @@ export async function runReleasePipeline(): Promise<boolean> {
             console.log(chalk.red('\n❌ Build failed. Aborting release.'));
             return false;
         }
+
+        const tagSuccess = await ReleaseManager.gitCommitAndTag(projectRoot, tag);
+        if (!tagSuccess) return false;
 
         console.log(chalk.cyan('\nStep 3: GitHub Release'));
         const ghSuccess = await ReleaseManager.createGhRelease(projectRoot, tag);
@@ -1668,12 +1818,26 @@ export async function runDeployPrepCore(): Promise<boolean> {
 
     await runStep('Core: Lint', async () => await runNodeScript(root, 'lint'));
     await runStep('Core: Tests', async () => await runNodeScript(root, 'test'));
-    await runStep('Core: Build Verify', async () => await runNodeScript(root, 'build:verify'));
+    const buildScript = fs.existsSync(path.join(root, 'package.json'))
+        ? (() => {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
+                if (pkg.scripts?.build) return 'build';
+                if (pkg.scripts?.['build:verify']) return 'build:verify';
+            } catch { }
+            return null;
+        })()
+        : null;
+    if (buildScript) {
+        await runStep(`Core: ${buildScript}`, async () => await runNodeScript(root, buildScript, true));
+    } else {
+        await runStep('Core: Build', async () => false);
+    }
 
     const dashboardRoot = path.join(root, 'dashboard');
     if (fs.existsSync(path.join(dashboardRoot, 'package.json'))) {
         await runStep('Dashboard: Lint', async () => await runNodeScript(dashboardRoot, 'lint'));
-        await runStep('Dashboard: Build', async () => await runNodeScript(dashboardRoot, 'build'));
+        await runStep('Dashboard: Build', async () => await runNodeScript(dashboardRoot, 'build', true));
     } else {
         console.log(chalk.gray('\n(Dashboard package.json not found. Skipping dashboard checks.)'));
     }

@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { User, Paperclip, CheckCheck } from "lucide-react";
 type TimestampLike = { toDate: () => Date };
 
-interface Message {
+export interface Message {
   id: string;
   senderId: string;
   senderRole: "client" | "staff" | "admin" | "maintainer";
