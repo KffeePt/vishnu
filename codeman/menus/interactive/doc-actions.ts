@@ -671,6 +671,15 @@ export async function runDocActivityPanel(): Promise<void> {
             output += line + '\n';
         }
 
+        const activeItems = panels[activePanel].items;
+        const activeItem = activeItems[selected[activePanel]];
+        const statusLabel = activeItem
+            ? `Selected: ${activeItem.rel}  |  ${activeItem.path}`
+            : 'Selected: (none)';
+
+        output += chalk.dim('─'.repeat(Math.max(10, cols - 1))) + '\n';
+        output += chalk.gray(truncate(statusLabel, Math.max(10, cols - 1))) + '\n';
+
         if (confirmDelete) {
             const panel = panels[confirmDelete.panelIndex];
             const item = panel.items[confirmDelete.itemIndex];
