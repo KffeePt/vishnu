@@ -3,6 +3,8 @@ import chalk from 'chalk';
 import { createSpinner } from '../components/spinner';
 import { ProcessManager } from '../core/process-manager';
 import { List } from '../components/list';
+import * as fs from 'fs-extra';
+import * as path from 'path';
 
 export async function runDevServer(system?: any) {
     console.log(chalk.blue('🚀 Checking ports...'));
@@ -82,7 +84,9 @@ async function handlePortConflict(pid: string, port: number) {
 
 async function launchDevServer(targetPort: number) {
     // Launch in new window
-    console.log(chalk.green(`\nStarting 'npm run dev' on port ${targetPort} in a new window...`));
+    const runner = await detectJsRunner(process.cwd());
+    const runnerLabel = runner === 'bun' ? 'bun run dev' : 'npm run dev';
+    console.log(chalk.green(`\nStarting '${runnerLabel}' on port ${targetPort} in a new window...`));
     console.log(chalk.gray('(This process runs in the background. Check the new window for logs.)'));
 
     const commandArgs = ['run', 'dev'];
@@ -90,7 +94,7 @@ async function launchDevServer(targetPort: number) {
         commandArgs.push('--', '-p', targetPort.toString());
     }
 
-    const npmCmd = `npm ${commandArgs.join(' ')}`;
+    const npmCmd = `${runner} ${commandArgs.join(' ')}`;
 
     // Use centralized spawner
     await ProcessManager.spawnDetachedWindow(
@@ -99,6 +103,25 @@ async function launchDevServer(targetPort: number) {
     );
 
     await new Promise(r => setTimeout(r, 2000));
+}
+
+async function detectJsRunner(projectRoot: string): Promise<'bun' | 'npm'> {
+    try {
+        const bunLock = path.join(projectRoot, 'bun.lockb');
+        const bunLockText = path.join(projectRoot, 'bun.lock');
+        if (await fs.pathExists(bunLock) || await fs.pathExists(bunLockText)) {
+            return 'bun';
+        }
+
+        const pkgPath = path.join(projectRoot, 'package.json');
+        if (await fs.pathExists(pkgPath)) {
+            const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
+            const pm = typeof pkg.packageManager === 'string' ? pkg.packageManager : '';
+            if (pm.startsWith('bun@')) return 'bun';
+        }
+    } catch { }
+
+    return 'npm';
 }
 
 // Use WMIC to check if the process CommandLine contains our CWD

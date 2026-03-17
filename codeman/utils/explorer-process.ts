@@ -23,6 +23,7 @@ export class StandaloneExplorer {
     private pageSize: number = 15;
     private errorMessage: string | null = null;
     private options: ExplorerOptions;
+    private mouseEnabledForRun: boolean = false;
 
     private resolvePromise: ((value: string | null) => void) | null = null;
     private boundKeyHandler: any;
@@ -56,6 +57,8 @@ export class StandaloneExplorer {
                         const valid = this.mapInputToKey(str);
                         if (valid) await this.handleKeypress(str, valid);
                     };
+                    io.enableMouse();
+                    this.mouseEnabledForRun = true;
                     io.consume(this.boundKeyHandler);
                 });
             } else {
@@ -104,6 +107,20 @@ export class StandaloneExplorer {
         if (this.errorMessage) {
             this.errorMessage = null;
             this.render();
+        }
+
+        // If empty, only allow actions that don't depend on selection
+        if (this.entries.length === 0) {
+            if (key.name === 'left' || key.name === 'backspace') {
+                await this.handleGoUp();
+            } else if (key.name === 'return') {
+                await this.handleSelectCurrent();
+            } else if (key.name === 'h') {
+                await this.handleGoHome();
+            } else if (key.name === 'escape' || (key.ctrl && key.name === 'c') || key.name === 'q') {
+                this.exit(null);
+            }
+            return;
         }
 
         if (key.name === 'up') {
@@ -185,6 +202,10 @@ export class StandaloneExplorer {
             if (this.options.preserveRawMode) {
                 import('../core/io').then(({ io }) => {
                     io.release(this.boundKeyHandler);
+                    if (this.mouseEnabledForRun) {
+                        io.disableMouse();
+                        this.mouseEnabledForRun = false;
+                    }
                 });
             } else {
                 process.stdin.removeListener('keypress', this.boundKeyHandler);

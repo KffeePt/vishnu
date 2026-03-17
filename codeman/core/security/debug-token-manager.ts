@@ -72,8 +72,7 @@ export const DebugTokenManager = {
             name: 'mode',
             message: 'Choose development mode:',
             choices: [
-                { name: 'Generate debug token', value: 'generate' },
-                { name: 'Enter existing debug token', value: 'enter' },
+                { name: 'Run build to get the token', value: 'run-build' },
                 { name: 'Skip (production mode)', value: 'skip' }
             ]
         }]);
@@ -84,9 +83,8 @@ export const DebugTokenManager = {
         }
 
         let token = existing || '';
-        if (answer.mode === 'generate') {
-            token = generateUuid();
-        } else {
+        if (answer.mode === 'run-build') {
+            console.log(chalk.cyan('\nLaunch the app in the emulator/device, capture the token from logs, and enter it here:'));
             const input = await inquirer.prompt([{
                 type: 'input',
                 name: 'token',

@@ -104,7 +104,7 @@ export class ProcessRegistryManager {
         }
     }
 
-    public static killConflicting(type: string, projectRoot: string, currentPid: number) {
+    public static killConflicting(type: string, projectRoot: string, currentPid: number, silent: boolean = false) {
         const lockFile = this.getLockFilePath(projectRoot, type);
         let pidToKill: number | null = null;
 
@@ -127,7 +127,9 @@ export class ProcessRegistryManager {
         if (pidToKill && pidToKill !== currentPid) {
             try {
                 process.kill(pidToKill, 0); // Check existence
-                console.log(chalk.yellow(`>>> Stopping previous ${type} instance (PID: ${pidToKill})...`));
+                if (!silent) {
+                    console.log(chalk.yellow(`>>> Stopping previous ${type} instance (PID: ${pidToKill})...`));
+                }
                 if (process.platform === 'win32') {
                     const { execSync } = require('child_process');
                     execSync(`taskkill /F /PID ${pidToKill}`);

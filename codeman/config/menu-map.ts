@@ -95,25 +95,6 @@ registry.register(UserActionMenu);
 
 // --- Script Handlers ---
 
-registerScript('createNextJs', async () => {
-    console.log(chalk.blue('Starting Next.js project creation...'));
-    console.log(chalk.yellow('Feature coming soon: Next.js Generator'));
-});
-
-registerScript('createPython', async () => {
-    console.log(chalk.blue('Starting Python project creation...'));
-    console.log(chalk.green('Note: Firebase Authentication is REQUIRED for this template.'));
-});
-
-registerScript('createCpp', async () => {
-    console.log(chalk.blue('Starting C++ project creation...'));
-    console.log(chalk.green('Note: Firebase Authentication is REQUIRED for this template.'));
-});
-
-registerScript('createFlutter', async () => {
-    console.log(chalk.blue('Starting Flutter project creation...'));
-});
-
 registerScript('restartCLI', async () => {
     state.shouldRestart = true;
     state.restartTargetNode = 'ROOT'; // Clean restart to Launcher
@@ -1527,9 +1508,32 @@ registerScript('maintRunBuild', async () => {
     const { ProcessManager } = await import('../core/process-manager');
     const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
+    const fs = (await import('fs-extra')).default;
+    const path = (await import('path')).default;
 
-    console.log(chalk.blue('\n🏗️ Running workspace build in a new window...'));
-    await ProcessManager.spawnDetachedWindow('Workspace Build', 'npm run build & pause', process.cwd());
+    const cwd = process.cwd();
+    const bunLock = path.join(cwd, 'bun.lockb');
+    const bunLockText = path.join(cwd, 'bun.lock');
+    let useBun = false;
+
+    if (await fs.pathExists(bunLock) || await fs.pathExists(bunLockText)) {
+        useBun = true;
+    } else {
+        const pkgPath = path.join(cwd, 'package.json');
+        if (await fs.pathExists(pkgPath)) {
+            try {
+                const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
+                if (typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith('bun@')) {
+                    useBun = true;
+                }
+            } catch { }
+        }
+    }
+
+    const buildCmd = useBun ? 'bun run build & pause' : 'npm run build & pause';
+
+    console.log(chalk.blue(`\n🏗️ Running workspace build in a new window... (${useBun ? 'bun' : 'npm'})`));
+    await ProcessManager.spawnDetachedWindow('Workspace Build', buildCmd, cwd);
     
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
     return 'maintenance-menu';

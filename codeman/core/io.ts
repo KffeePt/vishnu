@@ -98,8 +98,8 @@ class IOManager {
             const type = match[4]; // M = Press, m = Release
 
             if (type === 'M') {
-                // Click Handling: Left (0), Middle (1), or Right (2) -> Enter
-                if (button === 0 || button === 1 || button === 2) {
+                // Click Handling: Middle (1) only -> Enter
+                if (button === 1) {
                     // Ignore click if it happened immediately after gaining focus (within 100ms)
                     if (Date.now() - this.lastFocusTime > 100) {
                         const enterKey = '\r';

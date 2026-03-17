@@ -35,6 +35,7 @@ function printSeparator(width: number): string {
 // Replaces printBannerAnimated with a full frame render
 function renderDashboard(monitorPath: string, docsRoot: string) {
     const columns = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
 
     // Buffer output to avoid flickering
     let output = '\x1b[H'; // Move cursor to Home (0,0)
@@ -145,12 +146,28 @@ function renderDashboard(monitorPath: string, docsRoot: string) {
     output += "\n";
 
     // --- LOGS AREA ---
-    if (recentLogs.length === 0) {
+    const preLogLines =
+        1 + // initial blank
+        1 + // separator
+        1 + // blank after separator
+        asciiArt.length +
+        1 + // blank after art
+        1 + // header
+        1 + // status
+        2 + // monitoring path + blank line
+        2 + // status line + blank line
+        1 + // separator
+        1; // blank after separator
+
+    const maxLogs = Math.max(1, rows - preLogLines - 1);
+    const logsToShow = recentLogs.slice(-maxLogs);
+
+    if (logsToShow.length === 0) {
         const noActivity = "No recent activity...";
         const naPadding = Math.max(0, Math.floor((columns - noActivity.length) / 2));
         output += `${Colors.WHITE}${" ".repeat(naPadding)}${noActivity}${Colors.ENDC}\n`;
     } else {
-        for (const log of recentLogs) {
+        for (const log of logsToShow) {
             const timeLeft = Math.ceil((log.expiresAt - Date.now()) / 1000);
             // Optional: Show timer? User just said "disappear after 60s"
             // Let's just show the text.
@@ -174,7 +191,7 @@ async function main() {
         console.error(Colors.RED + `Failed to switch to target directory: ${targetRoot}` + Colors.ENDC);
     }
 
-    ProcessRegistryManager.killConflicting('shiva', targetRoot, process.pid);
+    ProcessRegistryManager.killConflicting('shiva', targetRoot, process.pid, true);
     ProcessRegistryManager.register('shiva', process.pid, targetRoot);
 
     const cleanup = () => {
@@ -187,7 +204,7 @@ async function main() {
     process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 
     const docsRoot = path.join(targetRoot, 'docs');
-    initDocsStructure(docsRoot);
+    const initLogs = initDocsStructure(docsRoot);
 
     // Initial clear and hide cursor
     process.stdout.write('\x1b[?25l');
@@ -197,37 +214,49 @@ async function main() {
     const LOGIC_INTERVAL = 1000;
     const TARGET_FPS = 60;
     const FRAME_TIME = Math.floor(1000 / TARGET_FPS);
+    let hasRenderedOnce = false;
+
+    const appendLogs = (logs: string[], ttlMs: number = 60000, now: number = Date.now()) => {
+        for (const text of logs) {
+            recentLogs.push({
+                id: Math.random().toString(36).substring(7),
+                text,
+                expiresAt: now + ttlMs
+            });
+        }
+    };
 
     // Loop
     while (true) {
         try {
             const now = Date.now();
 
-            // 1. Run Logic (Throttled)
+            // 1. Render first frame immediately to avoid startup flicker
+            if (!hasRenderedOnce) {
+                renderDashboard(targetRoot, docsRoot);
+                hasRenderedOnce = true;
+                appendLogs(initLogs);
+                await sleep(FRAME_TIME);
+                continue;
+            }
+
+            // 2. Run Logic (Throttled)
             if (now - lastLogicRun > LOGIC_INTERVAL) {
                 lastLogicRun = now;
                 const logs = runOrganizerCycle(docsRoot);
-
-                // Add new logs
-                for (const text of logs) {
-                    recentLogs.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: text,
-                        expiresAt: now + 60000 // 60s TTL
-                    });
-                }
+                appendLogs(logs, 60000, now);
 
                 // Prune expired
                 recentLogs = recentLogs.filter(l => l.expiresAt > Date.now());
             }
 
-            // 2. Render (Every Frame)
+            // 3. Render (Every Frame)
             renderDashboard(targetRoot, docsRoot);
 
-            // 3. Update animation state (Smoother increment)
+            // 4. Update animation state (Smoother increment)
             offset += 0.05;
 
-            // 4. Wait
+            // 5. Wait
             await sleep(FRAME_TIME);
         } catch (e: any) {
             // If crash, print and retry

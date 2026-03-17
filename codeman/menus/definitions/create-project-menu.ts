@@ -17,16 +17,6 @@ export const CreateProjectMenuDef: MenuDefinition = {
             action: { type: 'script', handler: 'createFlutter' }
         },
         {
-            label: '🐍 Python App (with Firebase)',
-            value: 'python',
-            action: { type: 'script', handler: 'createPython' }
-        },
-        {
-            label: '👾 C++ App (with Firebase)',
-            value: 'cpp',
-            action: { type: 'script', handler: 'createCpp' }
-        },
-        {
             label: '⬅️  Back',
             value: 'back',
             action: { type: 'back' }
