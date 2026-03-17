@@ -1,0 +1,9 @@
+{
+  "name": "@vishnu/sdk",
+  "version": "1.0.0",
+  "description": "Vishnu SDK Types",
+  "main": "src/index.ts",
+  "dependencies": {
+    "zod": "^3.22.4"
+  }
+}

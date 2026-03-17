@@ -1,0 +1,10 @@
+{
+  "name": "@vishnu/platform",
+  "version": "1.0.0",
+  "description": "Vishnu Platform Registries",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@vishnu/sdk": "workspace:*",
+    "chalk": "^4.1.2"
+  }
+}
