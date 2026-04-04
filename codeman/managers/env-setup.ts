@@ -5,6 +5,11 @@ import inquirer from 'inquirer';
 import { spawn } from 'child_process';
 import { state } from '../core/state';
 import { buildEnvTemplate, buildNextPublicFirebaseBlock, mergeEnvValues } from '../core/project/env-template';
+import {
+    buildEnvValuesFromCredentialFiles,
+    ensureRootCredentialGitignore,
+    inspectFlutterFirebaseOptions
+} from '../core/project/firebase-credentials';
 
 export class EnvSetupManager {
     static async verifyAndSetupEnv(forceValidations = false): Promise<boolean> {
@@ -47,7 +52,7 @@ export class EnvSetupManager {
         }
 
         // 2. Check for missing configuration (Strict Check: Values must exist)
-        const missing = [];
+        const missing: string[] = [];
         let envContent = '';
         if (fs.existsSync(envPath)) {
             envContent = fs.readFileSync(envPath, 'utf-8');
@@ -115,34 +120,20 @@ export class EnvSetupManager {
             }
         ]);
 
-        // Parse files
-        let apiKey = '', authDomain = '', projectId = '', storageBucket = '', messagingSenderId = '', appId = '', measurementId = '';
-
+        let envValues;
         try {
-            const clientContent = fs.readFileSync(clientSdkPath, 'utf-8');
-            apiKey = clientContent.match(/apiKey: "(.*)"/)?.[1] || '';
-            authDomain = clientContent.match(/authDomain: "(.*)"/)?.[1] || '';
-            projectId = clientContent.match(/projectId: "(.*)"/)?.[1] || '';
-            storageBucket = clientContent.match(/storageBucket: "(.*)"/)?.[1] || '';
-            messagingSenderId = clientContent.match(/messagingSenderId: "(.*)"/)?.[1] || '';
-            appId = clientContent.match(/appId: "(.*)"/)?.[1] || '';
-            measurementId = clientContent.match(/measurementId: "(.*)"/)?.[1] || '';
+            envValues = buildEnvValuesFromCredentialFiles({
+                adminSdkPath,
+                clientSdkPath,
+                existingEnvContent: fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '',
+                geminiKey
+            });
         } catch (e) {
             console.log(chalk.red("Error parsing firebase-sdk.js. Make sure it's valid format."));
+            return true;
         }
 
         // Generate .env
-        const envValues = {
-            GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
-            FIREBASE_API_KEY: apiKey,
-            FIREBASE_AUTH_DOMAIN: authDomain,
-            FIREBASE_PROJECT_ID: projectId,
-            FIREBASE_STORAGE_BUCKET: storageBucket,
-            FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
-            FIREBASE_APP_ID: appId,
-            FIREBASE_MEASUREMENT_ID: measurementId,
-            GEMINI_API_KEY: geminiKey
-        };
         let newEnvContent = buildEnvTemplate(envValues);
         if (isNextProject) {
             newEnvContent = `${newEnvContent}\n${buildNextPublicFirebaseBlock(envValues)}`;
@@ -150,18 +141,21 @@ export class EnvSetupManager {
 
         fs.writeFileSync(envPath, newEnvContent);
         console.log(chalk.green('✅ .env file generated successfully.'));
+        ensureRootCredentialGitignore(process.cwd());
+        console.log(chalk.green('✅ .gitignore protects admin-sdk.json and firebase-sdk.js.'));
 
         // Generate .env.example (deduplicated template)
         const envExamplePath = path.join(process.cwd(), '.env.example');
         const envExampleValues = mergeEnvValues({}, {
+            OWNER_EMAIL: envValues.OWNER_EMAIL,
             GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
-            FIREBASE_API_KEY: apiKey,
-            FIREBASE_AUTH_DOMAIN: authDomain,
-            FIREBASE_PROJECT_ID: projectId,
-            FIREBASE_STORAGE_BUCKET: storageBucket,
-            FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
-            FIREBASE_APP_ID: appId,
-            FIREBASE_MEASUREMENT_ID: measurementId,
+            FIREBASE_API_KEY: envValues.FIREBASE_API_KEY,
+            FIREBASE_AUTH_DOMAIN: envValues.FIREBASE_AUTH_DOMAIN,
+            FIREBASE_PROJECT_ID: envValues.FIREBASE_PROJECT_ID,
+            FIREBASE_STORAGE_BUCKET: envValues.FIREBASE_STORAGE_BUCKET,
+            FIREBASE_MESSAGING_SENDER_ID: envValues.FIREBASE_MESSAGING_SENDER_ID,
+            FIREBASE_APP_ID: envValues.FIREBASE_APP_ID,
+            FIREBASE_MEASUREMENT_ID: envValues.FIREBASE_MEASUREMENT_ID,
             GEMINI_API_KEY: ''
         });
         let envExampleContent = buildEnvTemplate(envExampleValues);
@@ -171,6 +165,18 @@ export class EnvSetupManager {
 
         fs.writeFileSync(envExamplePath, envExampleContent);
         console.log(chalk.green('✅ .env.example file generated successfully.'));
+
+        if (isFlutterProject) {
+            const projectId = envValues.FIREBASE_PROJECT_ID ?? '';
+            if (projectId) {
+                const flutterStatus = inspectFlutterFirebaseOptions(process.cwd(), projectId);
+                console.log(chalk.cyan('\n🪄 Flutter Firebase Status'));
+                console.log(chalk.gray(`   ${flutterStatus.message}`));
+                if (!flutterStatus.aligned) {
+                    console.log(chalk.yellow(`   Website/web env is ready, but native targets still need FlutterFire for ${projectId}.`));
+                }
+            }
+        }
 
         // Run firebase init ONLY if firebase.json doesn't exist yet
         const firebaseJsonPath = path.join(process.cwd(), 'firebase.json');

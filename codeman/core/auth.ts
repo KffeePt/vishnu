@@ -29,11 +29,22 @@ export interface AuthOptions {
     authDomain?: string;
 }
 
+export interface LoginWindowStatus {
+    active: boolean;
+    startedAt: number | null;
+    expiresAt: number | null;
+    timeoutMs: number;
+    port: number | null;
+}
+
 export class AuthService {
     private static server: http.Server | null = null;
     private static PORT = 3005;
     private static currentNonce: string | null = null;
     private static LOGIN_TIMEOUT_MS = 2 * 60 * 1000;
+    private static loginWindowStartedAt: number | null = null;
+    private static loginWindowExpiresAt: number | null = null;
+    private static loginWindowPort: number | null = null;
 
     private static async killPort(port: number) {
         return new Promise<void>((resolve) => {
@@ -196,7 +207,7 @@ export class AuthService {
                     };
                     state.setUser(sessionUser);
                     state.rawIdToken = storedIdToken;
-                    UserConfigManager.setLastAuth(Date.now(), sessionUser);
+                    UserConfigManager.setLastAuth(Date.now(), sessionUser, { authMode: 'normal' });
                     console.log(chalk.green('\n✅ Session restored from stored token.'));
                     return true;
                 }
@@ -207,7 +218,10 @@ export class AuthService {
             console.log(chalk.yellow('\n⚠️ Cached session found, but no valid token. Re-authentication required.'));
         }
 
-        return new Promise((resolve) => {
+        this.loginWindowStartedAt = Date.now();
+        this.loginWindowExpiresAt = this.loginWindowStartedAt + this.LOGIN_TIMEOUT_MS;
+
+        return new Promise<boolean>((resolve) => {
             // 2. Start Local Server to catch token
             this.server = http.createServer(async (req, res) => {
                 const parsedUrl = url.parse(req.url || '', true);
@@ -265,7 +279,7 @@ export class AuthService {
 
                                     console.log(`✅ Welcome, ${email}`);
                                     // Save Auth Timestamp & cache user
-                                    UserConfigManager.setLastAuth(Date.now(), sessionUser);
+                                    UserConfigManager.setLastAuth(Date.now(), sessionUser, { authMode: 'normal' });
 
                                     this.closeServer();
                                     resolve(true);
@@ -631,6 +645,7 @@ export class AuthService {
             // Error Handler for Port Conflict
             const tryListen = (port: number) => {
                 this.PORT = port;
+                this.loginWindowPort = port;
                 this.server?.listen(this.PORT, async () => {
                     const url = `http://localhost:${this.PORT}`;
                     console.log(`🌍 Opening browser at ${url}...`);
@@ -668,7 +683,23 @@ export class AuthService {
 
             tryListen(this.PORT);
             startTimeout();
+        }).finally(() => {
+            this.clearLoginWindow();
         });
+    }
+
+    static getLoginWindowStatus(): LoginWindowStatus {
+        const startedAt = this.loginWindowStartedAt;
+        const expiresAt = this.loginWindowExpiresAt;
+        const active = !!startedAt && !!expiresAt && expiresAt > Date.now();
+
+        return {
+            active,
+            startedAt,
+            expiresAt,
+            timeoutMs: this.LOGIN_TIMEOUT_MS,
+            port: active ? this.loginWindowPort : null
+        };
     }
 
     private static closeServer() {
@@ -676,5 +707,11 @@ export class AuthService {
             this.server.close();
             this.server = null;
         }
+    }
+
+    private static clearLoginWindow() {
+        this.loginWindowStartedAt = null;
+        this.loginWindowExpiresAt = null;
+        this.loginWindowPort = null;
     }
 }

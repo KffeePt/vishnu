@@ -6,9 +6,24 @@ import fs from 'fs-extra';
 import { LockManager } from './lock-manager';
 import { ProcessUtils } from '../utils/process-utils';
 import { GlobalState } from '../core/state';
+import { guardFlutterNativeFirebaseConfig } from '../core/project/firebase-credentials';
 import * as net from 'net'; // NEW
 
 export class BuildManager {
+    private static ensureFlutterNativeFirebaseReady(projectRoot: string): void {
+        const pubspecPath = path.join(projectRoot, 'pubspec.yaml');
+        if (!fs.existsSync(pubspecPath)) {
+            return;
+        }
+
+        const result = guardFlutterNativeFirebaseConfig(projectRoot);
+        if (!result.ok) {
+            throw new Error(
+                `${result.message}\n` +
+                `Native Flutter builds are blocked until FlutterFire is aligned.`
+            );
+        }
+    }
 
     private static getLogDir(): string {
         const now = new Date();
@@ -150,6 +165,7 @@ export class BuildManager {
 
     static async buildAll(projectRoot: string, buildMode: 'debug' | 'profile' | 'release' = 'debug', version?: string): Promise<void> {
         console.log(chalk.cyan(`\n=== Consultorio Build Manager (${buildMode.toUpperCase()}) ===`));
+        this.ensureFlutterNativeFirebaseReady(projectRoot);
 
         const logDir = path.join(projectRoot, this.getLogDir());
         await fs.ensureDir(logDir);
@@ -540,9 +556,141 @@ export class BuildManager {
         await ProcessUtils.killProcess('dart', true);
     }
 
+    private static isWebDevice(device: { id: string; name: string; properties?: string }): boolean {
+        const id = device.id.toLowerCase();
+        const name = device.name.toLowerCase();
+        const properties = (device.properties || '').toLowerCase();
+
+        return id === 'chrome' ||
+            id === 'edge' ||
+            id === 'web-server' ||
+            properties.includes('web-javascript') ||
+            name.includes('chrome') ||
+            name.includes('edge') ||
+            name.includes('web server');
+    }
+
+    private static isBrowserWebDevice(device: { id: string; name: string; properties?: string }): boolean {
+        const id = device.id.toLowerCase();
+        const name = device.name.toLowerCase();
+
+        return (id === 'chrome' || id === 'edge') ||
+            name.includes('chrome') ||
+            name.includes('edge');
+    }
+
+    private static isAndroidDevice(device: { id: string; name: string; properties?: string }): boolean {
+        const id = device.id.toLowerCase();
+        const name = device.name.toLowerCase();
+        const properties = (device.properties || '').toLowerCase();
+
+        return id.startsWith('emulator-') ||
+            properties.includes('android') ||
+            name.includes('android') ||
+            name.includes('gphone');
+    }
+
+    private static isIosDevice(device: { id: string; name: string; properties?: string }): boolean {
+        const id = device.id.toLowerCase();
+        const name = device.name.toLowerCase();
+        const properties = (device.properties || '').toLowerCase();
+
+        return id.includes('ios') ||
+            properties.includes('ios') ||
+            name.includes('iphone') ||
+            name.includes('ipad') ||
+            name.includes('simulator');
+    }
+
+    private static isDesktopDevice(device: { id: string; name: string; properties?: string }, platform: 'windows' | 'macos'): boolean {
+        const id = device.id.toLowerCase();
+        const name = device.name.toLowerCase();
+        const properties = (device.properties || '').toLowerCase();
+
+        if (platform === 'windows') {
+            return id === 'windows' || name.includes('windows') || properties.includes('windows-x64');
+        }
+
+        return id === 'macos' || name.includes('macos') || properties.includes('darwin');
+    }
+
+    private static async resolveFlutterTarget(target: string): Promise<string | null> {
+        const { ProcessUtils } = await import('../utils/process-utils');
+        const inquirer = (await import('inquirer')).default;
+
+        const devices = await ProcessUtils.getDevices();
+        const normalizedTarget = target.toLowerCase();
+
+        if (normalizedTarget === 'web') {
+            const browserDevices = devices.filter(device => this.isBrowserWebDevice(device));
+            const choices = [
+                {
+                    name: 'Localhost dev server (web-server, port 8080)',
+                    value: 'web-server'
+                },
+                ...browserDevices.map(device => ({
+                    name: `${device.name} (${device.id})`,
+                    value: device.id
+                }))
+            ];
+
+            if (browserDevices.length === 0) {
+                console.log(chalk.yellow('   > No Chrome/Edge web device found. Opening Flutter web-server on localhost.'));
+                return 'web-server';
+            }
+
+            const { selectedTarget } = await inquirer.prompt([{
+                type: 'list',
+                name: 'selectedTarget',
+                message: 'How should Flutter web run?',
+                default: 'web-server',
+                choices
+            }]);
+
+            return selectedTarget;
+        }
+
+        let matches = devices.filter(device => {
+            if (normalizedTarget === 'android') return this.isAndroidDevice(device);
+            if (normalizedTarget === 'ios') return this.isIosDevice(device);
+            if (normalizedTarget === 'windows' || normalizedTarget === 'macos') {
+                return this.isDesktopDevice(device, normalizedTarget);
+            }
+
+            const id = device.id.toLowerCase();
+            const name = device.name.toLowerCase();
+            return id === normalizedTarget || name.includes(normalizedTarget);
+        });
+
+        if (matches.length === 1) {
+            const selected = matches[0];
+            console.log(chalk.green(`   > Selected device: ${selected.name} (${selected.id})`));
+            return selected.id;
+        }
+
+        if (matches.length > 1) {
+            const { selectedTarget } = await inquirer.prompt([{
+                type: 'list',
+                name: 'selectedTarget',
+                message: 'Multiple matching devices found. Which one should Flutter use?',
+                choices: matches.map(device => ({
+                    name: `${device.name} (${device.id})`,
+                    value: device.id
+                }))
+            }]);
+        }
+
+        console.log(chalk.red(`   > No Flutter device matched "${target}".`));
+        return null;
+    }
+
     // Specific Runners
-    static async startProcess(projectRoot: string, platform: 'windows' | 'web' | 'android' | 'macos' | 'ios'): Promise<void> {
+    static async startProcess(projectRoot: string, platform: string): Promise<void> {
         console.log(chalk.green(`\n🚀 Starting Flutter on ${platform} in a new terminal...`));
+
+        if (platform !== 'web' && platform !== 'web-server') {
+            this.ensureFlutterNativeFirebaseReady(projectRoot);
+        }
 
         // Pre-launch Cleanup: Kill previous instances of the APP (not emulators) to prevent locking
         // We kill 'flutter' to stop previous run commands which might be holding locks
@@ -554,18 +702,29 @@ export class BuildManager {
             await ProcessUtils.killProcess('consultorio.exe', true);
         }
 
+        const resolvedTarget = await this.resolveFlutterTarget(platform);
+        if (!resolvedTarget) {
+            return;
+        }
+
         let command = '';
         let args: string[] = [];
 
         // Construct the flutter command
-        const flutterCmd = `flutter run -d ${platform}`;
+        const flutterCmd = resolvedTarget === 'web-server'
+            ? 'flutter run -d web-server --web-port=8080'
+            : `flutter run -d ${resolvedTarget}`;
+
+        if (resolvedTarget === 'web-server') {
+            console.log(chalk.yellow('   > Launching Flutter web server at http://localhost:8080 ...'));
+        }
 
         if (process.platform === 'win32') {
             // Windows: Use 'start' to open a new cmd window
             // /k keeps the window open, /c closes it after command finishes (but we want to see output)
             // 'start "Title" cmd /k ...'
             command = 'start';
-            args = [`"Run ${platform}"`, 'cmd', '/k', `"${flutterCmd}"`];
+            args = [`"Run ${resolvedTarget}"`, 'cmd', '/k', `"${flutterCmd}"`];
         } else if (process.platform === 'darwin') {
             // macOS: Use 'open -a Terminal' or AppleScript
             // 'open -a Terminal path' opens a terminal at path, checking if we can pass a command
@@ -579,7 +738,7 @@ export class BuildManager {
             // Assuming user is mostly Windows/Mac for this request
             console.log(chalk.yellow('Detached terminal not fully supported on this OS yet. Running attached.'));
             command = 'flutter';
-            args = ['run', '-d', platform];
+            args = ['run', '-d', resolvedTarget];
         }
 
         const child = spawn(command, args, {

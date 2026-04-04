@@ -240,6 +240,17 @@ registerScript('setupFirebaseAuth', async () => {
     await EnvSetupManager.verifyAndSetupEnv(true); // Force validation
 });
 
+registerScript('showSessionInfo', async (args?: { returnTo?: string }) => {
+    const inquirer = (await import('inquirer')).default;
+    const { printSessionInfo } = await import('../core/session-info');
+
+    printSessionInfo();
+    console.log('');
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+
+    return args?.returnTo || 'config';
+});
+
 // --- Specific Handlers Updates ---
 
 registerScript('useCurrentFolder', async () => {
@@ -1018,7 +1029,7 @@ registerScript('runAndroid', async () => {
         d.name.toLowerCase().includes('gphone')
     );
 
-    let targetId = null;
+    let targetId: string | null = null;
 
     if (androidDevices.length === 1) {
         targetId = androidDevices[0].id;
@@ -1386,6 +1397,34 @@ async function detectNodeRunner(projectRoot: string): Promise<'npm' | 'bun'> {
     return 'npm';
 }
 
+async function ensureNodeToolchain(projectRoot: string, requiredPackages: string[]): Promise<boolean> {
+    const pkgPath = path.join(projectRoot, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+        return true;
+    }
+
+    const nodeModulesDir = path.join(projectRoot, 'node_modules');
+    const missingPackages = requiredPackages.filter(pkg => !fs.existsSync(path.join(nodeModulesDir, pkg)));
+    if (missingPackages.length === 0) {
+        return true;
+    }
+
+    const lockPath = path.join(projectRoot, 'package-lock.json');
+    const installArgs = fs.existsSync(lockPath) ? ['ci'] : ['install'];
+    console.log(chalk.yellow(`Missing ${missingPackages.join(', ')} in ${path.relative(process.cwd(), projectRoot) || '.'}. Running npm ${installArgs[0]}...`));
+
+    const { spawn } = await import('child_process');
+    return new Promise<boolean>((resolve) => {
+        const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+        const child = spawn(npmCmd, installArgs, {
+            cwd: projectRoot,
+            shell: true,
+            stdio: 'inherit'
+        });
+        child.on('close', (code) => resolve(code === 0));
+    });
+}
+
 async function runNodeScript(projectRoot: string, scriptName: string, requireScript: boolean = false): Promise<boolean> {
     const pkgPath = path.join(projectRoot, 'package.json');
     if (!fs.existsSync(pkgPath)) {
@@ -1419,6 +1458,22 @@ async function runNodeScript(projectRoot: string, scriptName: string, requireScr
         }
         console.log(chalk.gray(`${msg} Skipping.`));
         return true;
+    }
+
+    const toolchainRequirements: Record<string, string[]> = {
+        lint: ['typescript'],
+        test: ['vitest'],
+        build: ['typescript', 'tsx'],
+        'build:verify': ['typescript', 'tsx']
+    };
+
+    const requiredPackages = toolchainRequirements[scriptName] || [];
+    if (requiredPackages.length > 0) {
+        const ready = await ensureNodeToolchain(projectRoot, requiredPackages);
+        if (!ready) {
+            console.log(chalk.red(`Failed to install required dependencies for "${scriptName}".`));
+            return false;
+        }
     }
 
     const runner = await detectNodeRunner(projectRoot);

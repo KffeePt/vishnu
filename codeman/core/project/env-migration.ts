@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-import { buildEnvTemplate, mergeEnvValues, parseEnv, validateEnvFormat } from './env-template';
+import { buildEnvTemplate, ENV_TEMPLATE_KEYS, mergeEnvValues, parseEnv, validateEnvFormat } from './env-template';
 import { List } from '../../components/list';
 
 const NEXT_PUBLIC_KEYS = [
@@ -34,6 +34,46 @@ const IGNORED_DIRS = new Set([
     '.firebase',
     '.vercel'
 ]);
+
+function getTemplateKeySet(): Set<string> {
+    return new Set(ENV_TEMPLATE_KEYS.map(String));
+}
+
+function collectPreservedEnvLines(content: string): string[] {
+    const templateKeys = getTemplateKeySet();
+    const preserved: string[] = [];
+    const lines = content.split(/\r?\n/);
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+
+        const idx = trimmed.indexOf('=');
+        if (idx === -1) continue;
+
+        const key = trimmed.slice(0, idx).trim();
+        if (!key || templateKeys.has(key)) continue;
+
+        preserved.push(trimmed);
+    }
+
+    return preserved;
+}
+
+function buildRebasedEnvContent(existingEnv: Record<string, string>): string {
+    const rebased = mergeEnvValues(existingEnv, {});
+    return buildEnvTemplate(rebased);
+}
+
+function buildMergedEnvContent(existingContent: string, existingEnv: Record<string, string>): string {
+    const rebased = buildRebasedEnvContent(existingEnv).trimEnd();
+    const preserved = collectPreservedEnvLines(existingContent);
+    if (preserved.length === 0) {
+        return `${rebased}\n`;
+    }
+
+    return `${rebased}\n\n# Preserved custom values\n${preserved.join('\n')}\n`;
+}
 
 function scanForNextPublic(projectPath: string): string[] {
     const matches: string[] = [];
@@ -152,14 +192,19 @@ export async function runEnvMigrationPrompt(projectPath: string): Promise<void> 
         }
     }
 
-    const choice = await List('Fix now or leave as-is?', [
-        { name: 'Fix now (migrate)', value: 'fix' },
-        { name: 'Leave as-is', value: 'skip' }
+    const choice = await List('Mismatch found. What would you like to do?', [
+        { name: 'Leave as is', value: 'skip' },
+        { name: 'Fix now (migrate)', value: 'fix' }
     ]);
 
     if (choice !== 'fix') {
         return;
     }
+
+    const fixMode = await List('Choose how to fix the env file:', [
+        { name: 'Merge fix (recommended)', value: 'merge' },
+        { name: 'Rebase fix (rewrite file)', value: 'rebase' }
+    ]);
 
     let existing: Record<string, string> = {};
     const beforeEnv = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
@@ -171,8 +216,9 @@ export async function runEnvMigrationPrompt(projectPath: string): Promise<void> 
         }
     }
 
-    const merged = mergeEnvValues(existing, {});
-    const envContent = buildEnvTemplate(merged);
+    const envContent = fixMode === 'rebase'
+        ? buildRebasedEnvContent(existing)
+        : buildMergedEnvContent(beforeEnv, existing);
 
     const diffPreview = buildSimpleDiff(beforeEnv, envContent);
     console.log(chalk.cyan('\n.env diff preview:'));

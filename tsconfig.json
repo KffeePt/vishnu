@@ -4,11 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noImplicitAny": false,
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["codeman/**/*.ts", "tests/**/*.ts"],
+  "include": ["codeman/**/*.ts", "codeman/**/*.d.ts", "tests/**/*.ts", "tests/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "setup/output"]
 }

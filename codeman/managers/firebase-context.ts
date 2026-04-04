@@ -28,7 +28,7 @@ export class FirebaseContextManager {
             const stripAnsi = (str: string) => str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 
             // Check Login
-            let user = null;
+            let user: string | null = null;
             try {
                 // Reverted --no-colors as it is not supported by all firebase versions
                 const { stdout: loginOut } = await execAsync('firebase login:list', { timeout: 15000 });
@@ -47,7 +47,7 @@ export class FirebaseContextManager {
             }
 
             // Check Active Project
-            let project = null;
+            let project: string | null = null;
             try {
                 const { stdout: useOut } = await execAsync('firebase use', { timeout: 8000 });
                 const cleanUse = stripAnsi(useOut).trim();

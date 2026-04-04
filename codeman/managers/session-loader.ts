@@ -113,11 +113,20 @@ export class SessionLoader {
 
             if (appCheck.enabled) {
                 const { DebugTokenManager } = await import('../core/security/debug-token-manager');
-                await DebugTokenManager.runDevWorkflow({
+                const workflowResult = await DebugTokenManager.runDevWorkflow({
                     projectPath,
                     framework: intelligence.framework.kind,
                     intelligence
                 });
+                if (workflowResult === 'exit-to-root') {
+                    console.log(chalk.gray('Leaving project setup and returning to the main menu.'));
+                    state.project.rootPath = '';
+                    state.setProjectType('unknown');
+                    state.user = undefined;
+                    state.authBypass = false;
+                    state.rawIdToken = undefined;
+                    return false;
+                }
             }
 
             // 6. Auth & Context Checks

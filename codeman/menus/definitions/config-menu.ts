@@ -27,6 +27,11 @@ export const ConfigMenuDef: MenuDefinition = {
             action: { type: 'navigate', target: 'user-manager' }
         },
         {
+            label: '⏳ Session Info / Timers',
+            value: 'session-info',
+            action: { type: 'script', handler: 'showSessionInfo', args: { returnTo: 'config' } }
+        },
+        {
             label: '⚙️  App Settings',
             value: 'settings',
             action: { type: 'navigate', target: 'settings' }

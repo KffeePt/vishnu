@@ -9,12 +9,16 @@ interface UserConfig {
     version: string;
     lastAuthTimestamp?: number;
     cachedUser?: any;
+    authMode?: 'normal' | 'owner-bypass';
+    authBypassExpiresAt?: number;
 }
 
 const DEFAULT_CONFIG: UserConfig = {
     version: '2.0',
     lastAuthTimestamp: 0,
-    cachedUser: null
+    cachedUser: null,
+    authMode: 'normal',
+    authBypassExpiresAt: 0
 };
 
 export const UserConfigManager = {
@@ -44,11 +48,19 @@ export const UserConfigManager = {
         return config.version;
     },
 
-    setLastAuth: (timestamp: number, user?: any) => {
+    setLastAuth: (timestamp: number, user?: any, options?: { authMode?: 'normal' | 'owner-bypass'; authBypassExpiresAt?: number }) => {
         const config = UserConfigManager.ensureConfig();
         config.lastAuthTimestamp = timestamp;
         if (user) {
             config.cachedUser = user;
+        }
+        if (options?.authMode) {
+            config.authMode = options.authMode;
+        }
+        if (typeof options?.authBypassExpiresAt === 'number') {
+            config.authBypassExpiresAt = options.authBypassExpiresAt;
+        } else if (options?.authMode === 'normal') {
+            config.authBypassExpiresAt = 0;
         }
         try {
             fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
@@ -65,5 +77,37 @@ export const UserConfigManager = {
     getCachedUser: (): any | null => {
         const config = UserConfigManager.ensureConfig();
         return config.cachedUser || null;
+    },
+
+    getAuthMode: (): 'normal' | 'owner-bypass' => {
+        const config = UserConfigManager.ensureConfig();
+        return config.authMode || 'normal';
+    },
+
+    getAuthBypassExpiresAt: (): number => {
+        const config = UserConfigManager.ensureConfig();
+        return config.authBypassExpiresAt || 0;
+    },
+
+    setAuthBypassExpiresAt: (expiresAt: number) => {
+        const config = UserConfigManager.ensureConfig();
+        config.authMode = 'owner-bypass';
+        config.authBypassExpiresAt = expiresAt;
+        try {
+            fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+        } catch (e) {
+            console.error('Failed to save config:', e);
+        }
+    },
+
+    clearAuthBypass: () => {
+        const config = UserConfigManager.ensureConfig();
+        config.authMode = 'normal';
+        config.authBypassExpiresAt = 0;
+        try {
+            fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+        } catch (e) {
+            console.error('Failed to save config:', e);
+        }
     }
 };

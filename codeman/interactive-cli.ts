@@ -9,7 +9,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
-import { buildEnvTemplate, buildNextPublicFirebaseBlock } from './core/project/env-template';
+import { buildEnvTemplate, buildNextPublicFirebaseBlock, mergeEnvValues } from './core/project/env-template';
+import {
+  buildEnvValuesFromCredentialFiles,
+  ensureRootCredentialGitignore,
+  inspectFlutterFirebaseOptions
+} from './core/project/firebase-credentials';
 import { registry } from './core/registry';
 import { Engine } from './core/engine';
 // Cleaned Imports
@@ -142,29 +147,12 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
       }
     ]);
 
-    // Parse files
-    const adminConfig = JSON.parse(fs.readFileSync(adminSdkPath, 'utf-8'));
-    const clientContent = fs.readFileSync(clientSdkPath, 'utf-8');
-    const apiKey = clientContent.match(/apiKey: "(.*)"/)?.[1] || '';
-    const authDomain = clientContent.match(/authDomain: "(.*)"/)?.[1] || '';
-    const projectId = clientContent.match(/projectId: "(.*)"/)?.[1] || '';
-    const storageBucket = clientContent.match(/storageBucket: "(.*)"/)?.[1] || '';
-    const messagingSenderId = clientContent.match(/messagingSenderId: "(.*)"/)?.[1] || '';
-    const appId = clientContent.match(/appId: "(.*)"/)?.[1] || '';
-    const measurementId = clientContent.match(/measurementId: "(.*)"/)?.[1] || '';
-
-    // Generate .env
-    const envValues = {
-      GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
-      FIREBASE_API_KEY: apiKey,
-      FIREBASE_AUTH_DOMAIN: authDomain,
-      FIREBASE_PROJECT_ID: projectId,
-      FIREBASE_STORAGE_BUCKET: storageBucket,
-      FIREBASE_MESSAGING_SENDER_ID: messagingSenderId,
-      FIREBASE_APP_ID: appId,
-      FIREBASE_MEASUREMENT_ID: measurementId,
-      GEMINI_API_KEY: geminiKey
-    };
+    const envValues = buildEnvValuesFromCredentialFiles({
+      adminSdkPath,
+      clientSdkPath,
+      existingEnvContent: fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '',
+      geminiKey
+    });
     let envContent = buildEnvTemplate(envValues).trim();
     if (isNextProject) {
       envContent = `${envContent}\n\n${buildNextPublicFirebaseBlock(envValues).trim()}`;
@@ -172,6 +160,41 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
 
     fs.writeFileSync(envPath, envContent);
     console.log(chalk.green('✅ .env file generated successfully.'));
+
+    const envExamplePath = path.join(process.cwd(), '.env.example');
+    const envExampleValues = mergeEnvValues({}, {
+      OWNER_EMAIL: envValues.OWNER_EMAIL,
+      GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
+      FIREBASE_API_KEY: envValues.FIREBASE_API_KEY,
+      FIREBASE_AUTH_DOMAIN: envValues.FIREBASE_AUTH_DOMAIN,
+      FIREBASE_PROJECT_ID: envValues.FIREBASE_PROJECT_ID,
+      FIREBASE_STORAGE_BUCKET: envValues.FIREBASE_STORAGE_BUCKET,
+      FIREBASE_MESSAGING_SENDER_ID: envValues.FIREBASE_MESSAGING_SENDER_ID,
+      FIREBASE_APP_ID: envValues.FIREBASE_APP_ID,
+      FIREBASE_MEASUREMENT_ID: envValues.FIREBASE_MEASUREMENT_ID,
+      GEMINI_API_KEY: ''
+    });
+    let envExampleContent = buildEnvTemplate(envExampleValues).trim();
+    if (isNextProject) {
+      envExampleContent = `${envExampleContent}\n\n${buildNextPublicFirebaseBlock(envExampleValues).trim()}`;
+    }
+    fs.writeFileSync(envExamplePath, `${envExampleContent}\n`);
+    console.log(chalk.green('✅ .env.example file generated successfully.'));
+
+    ensureRootCredentialGitignore(process.cwd());
+    console.log(chalk.green('✅ .gitignore protects admin-sdk.json and firebase-sdk.js.'));
+
+    if (isFlutterProject) {
+      const projectId = envValues.FIREBASE_PROJECT_ID ?? '';
+      if (projectId) {
+        const flutterStatus = inspectFlutterFirebaseOptions(process.cwd(), projectId);
+        console.log(chalk.cyan('\n🪄 Flutter Firebase Status'));
+        console.log(chalk.gray(`   ${flutterStatus.message}`));
+        if (!flutterStatus.aligned) {
+          console.log(chalk.yellow(`   Website/web env is ready, but native targets still need FlutterFire for ${projectId}.`));
+        }
+      }
+    }
 
     // Run firebase init ONLY if firebase.json doesn't exist yet
     const firebaseJsonPath = path.join(process.cwd(), 'firebase.json');
@@ -197,7 +220,7 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
 
   // Existing check logic for when .env exists (and cloud is enabled)
 
-  const missing = [];
+  const missing: string[] = [];
   if (!isFlutterProject) {
     // These are required for Next.js but optional for Flutter
     if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.FIREBASE_SERVICE_ACCOUNT) missing.push('GOOGLE_APPLICATION_CREDENTIALS');

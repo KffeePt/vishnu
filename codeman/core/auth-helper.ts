@@ -41,11 +41,44 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
     }
     await ensureProjectContext(projectPath);
 
+    const OWNER_BYPASS_TTL_MS = 30 * 60 * 1000;
+    const cachedUser = UserConfigManager.getCachedUser();
+    const authMode = UserConfigManager.getAuthMode();
+    const bypassExpiresAt = UserConfigManager.getAuthBypassExpiresAt();
+    const ownerBypassFresh =
+        authMode === 'owner-bypass' &&
+        !!cachedUser &&
+        typeof bypassExpiresAt === 'number' &&
+        bypassExpiresAt > Date.now() &&
+        (cachedUser.role === 'owner' || cachedUser.isAdmin === true);
+
+    if (authMode === 'owner-bypass' && !ownerBypassFresh) {
+        UserConfigManager.clearAuthBypass();
+    }
+
+    if (state.authBypass && !ownerBypassFresh) {
+        state.authBypass = false;
+        state.rawIdToken = undefined;
+        UserConfigManager.clearAuthBypass();
+    }
+
+    if (!state.authBypass && ownerBypassFresh) {
+        state.authBypass = true;
+        state.user = cachedUser;
+        console.log(chalk.green('\n✅ Restored Vishnu owner bypass from cache.'));
+        console.log(chalk.gray(`   Bypass expires at: ${new Date(bypassExpiresAt).toLocaleString()}`));
+    }
+
     // 1. Verify Environment (.env, API Keys)
     await EnvSetupManager.verifyAndSetupEnv();
 
     // 2. Check Auth if Cloud Features Enabled
     if (state.cloudFeaturesEnabled) {
+        if (ownerBypassFresh) {
+            await ensureProjectContext(projectPath);
+            return true;
+        }
+
         if (!state.authBypass) {
             const { fileURLToPath } = await import('url');
             const __filename = fileURLToPath(import.meta.url);
@@ -118,9 +151,14 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
                     }
 
                     state.authBypass = true;
-                    UserConfigManager.setLastAuth(Date.now(), state.user);
+                    const bypassExpiresAt = Date.now() + OWNER_BYPASS_TTL_MS;
+                    UserConfigManager.setLastAuth(Date.now(), state.user, {
+                        authMode: 'owner-bypass',
+                        authBypassExpiresAt: bypassExpiresAt
+                    });
                     await ensureProjectContext(projectPath);
                     console.log(chalk.yellow('\n⚠️  Owner bypass enabled. Project Firebase auth skipped.'));
+                    console.log(chalk.gray(`   Bypass expires at: ${new Date(bypassExpiresAt).toLocaleString()}`));
                     return true;
                 } catch (err: any) {
                     console.log(chalk.red(`\n🚫 Owner bypass failed: ${err?.message || err}`));
@@ -131,8 +169,15 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
             }
         }
         if (state.authBypass) {
-            await ensureProjectContext(projectPath);
-            return true;
+            if (typeof bypassExpiresAt === 'number' && bypassExpiresAt > 0 && Date.now() > bypassExpiresAt) {
+                console.log(chalk.yellow('\n⚠️  Vishnu owner bypass expired. Re-authentication required.'));
+                state.authBypass = false;
+                state.rawIdToken = undefined;
+                UserConfigManager.clearAuthBypass();
+            } else {
+                await ensureProjectContext(projectPath);
+                return true;
+            }
         }
 
         if (state.project.security?.mode === 'vercel') {

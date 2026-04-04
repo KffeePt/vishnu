@@ -1,6 +1,7 @@
 import fs from 'fs';
 
 export interface EnvTemplateValues {
+    OWNER_EMAIL?: string;
     GOOGLE_APPLICATION_CREDENTIALS?: string;
     FIREBASE_API_KEY?: string;
     FIREBASE_AUTH_DOMAIN?: string;
@@ -20,12 +21,12 @@ export interface EnvTemplateValues {
     MP_PROD_PUBLIC_KEY?: string;
     MP_PROD_ACCESS_TOKEN?: string;
     MP_BACKEND_URL?: string;
-    PRESCRIPTION_VIEWER_BASE_URL?: string;
     LEGAL_BASE_URL?: string;
     GEMINI_API_KEY?: string;
 }
 
 export const ENV_TEMPLATE_KEYS: Array<keyof EnvTemplateValues> = [
+    'OWNER_EMAIL',
     'GOOGLE_CLIENT_SECRET',
     'GOOGLE_WEB_CLIENT_ID',
     'ANDROID_SHA1',
@@ -45,7 +46,6 @@ export const ENV_TEMPLATE_KEYS: Array<keyof EnvTemplateValues> = [
     'MP_PROD_PUBLIC_KEY',
     'MP_PROD_ACCESS_TOKEN',
     'MP_BACKEND_URL',
-    'PRESCRIPTION_VIEWER_BASE_URL',
     'LEGAL_BASE_URL',
     'GEMINI_API_KEY'
 ];
@@ -74,6 +74,7 @@ ANDROID_SHA1=${values.ANDROID_SHA1 ?? ''}
 ANDROID_SHA256=${values.ANDROID_SHA256 ?? ''}
 
 # Admin Setup
+OWNER_EMAIL=${values.OWNER_EMAIL ?? ''}
 GOOGLE_APPLICATION_CREDENTIALS=${values.GOOGLE_APPLICATION_CREDENTIALS ?? 'admin-sdk.json'}
 
 # Firebase Client (Browser API key from Google Cloud Console)
@@ -97,7 +98,6 @@ MP_PROD_ACCESS_TOKEN=${values.MP_PROD_ACCESS_TOKEN ?? 'YOUR_PROD_ACCESS_TOKEN'}
 MP_BACKEND_URL=${values.MP_BACKEND_URL ?? 'https://us-central1-tu-proyecto.cloudfunctions.net/createPreference'}
 
 # App URLs
-PRESCRIPTION_VIEWER_BASE_URL=${values.PRESCRIPTION_VIEWER_BASE_URL ?? ''}
 LEGAL_BASE_URL=${values.LEGAL_BASE_URL ?? ''}
 
 # AI
