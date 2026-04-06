@@ -59,17 +59,19 @@ export const LinkProjectMenu: MenuNode = {
         // Process Files
         console.log(chalk.cyan('\n⚙️  Processing credentials...'));
 
+        const secretsDir = path.join(process.cwd(), '.secrets');
+        await fs.ensureDir(secretsDir);
+
         const adminSrc = path.join(toolsDir, adminSdkFile);
-        const adminDest = path.join(process.cwd(), 'service-account.json'); // Root for cleanliness or tools/code-manager/config?
-        // Standardize to root or a secure config folder. Let's put it in root but gitignore it (already in .gitignore usually? No, we should check).
-        // Actually, user said "make it so it initializes... and the firebase configuration".
-        // Let's place it in `tools/code-manager/config/service-account.json` to keep root clean, or just root.
-        // Common practice: `service-account.json` in root, added to .gitignore.
+        const adminDest = path.join(secretsDir, 'admin-sdk.json');
         await fs.copy(adminSrc, adminDest);
         console.log(chalk.green(`✅ Copied Admin SDK to ${adminDest}`));
 
         const clientSrc = path.join(toolsDir, clientJsFile);
         const clientContent = await fs.readFile(clientSrc, 'utf-8');
+        const clientDest = path.join(secretsDir, 'firebase-sdk.js');
+        await fs.copy(clientSrc, clientDest);
+        console.log(chalk.green(`✅ Copied Firebase Client SDK to ${clientDest}`));
 
         // Extract Project ID (Simple regex)
         const projectIdMatch = clientContent.match(/projectId:\s*['"]([^'"]+)['"]/);
@@ -91,7 +93,9 @@ export const LinkProjectMenu: MenuNode = {
         };
 
         setEnv('FIREBASE_PROJECT_ID', projectId);
-        setEnv('GOOGLE_APPLICATION_CREDENTIALS', 'service-account.json');
+        setEnv('FIREBASE_DATABASE_URL', `https://${projectId}-default-rtdb.firebaseio.com/`);
+        setEnv('GOOGLE_APPLICATION_CREDENTIALS', '.secrets/admin-sdk.json');
+        setEnv('FIREBASE_WEB_SDK_FILE', '.secrets/firebase-sdk.js');
 
         await fs.writeFile(envPath, envLines.join('\n'));
         console.log(chalk.green('✅ Updated .env'));

@@ -57,9 +57,14 @@ export const AuthTokenStore = {
         return tokens.expiresAt <= Date.now() + skewMs;
     },
 
-    async getValidIdToken(apiKey?: string): Promise<string | null> {
+    async getValidIdToken(apiKey?: string, minUpdatedAt = 0): Promise<string | null> {
         const tokens = this.load();
         if (!tokens) return null;
+
+        if (minUpdatedAt > 0 && typeof tokens.updatedAt === 'number' && tokens.updatedAt < minUpdatedAt) {
+            this.clear();
+            return null;
+        }
 
         if (!this.isExpired(tokens)) {
             return tokens.firebaseIdToken;

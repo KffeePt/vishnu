@@ -4,11 +4,11 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
 import { state } from '../core/state';
-import { buildEnvTemplate, buildNextPublicFirebaseBlock, mergeEnvValues } from '../core/project/env-template';
 import {
-    buildEnvValuesFromCredentialFiles,
     ensureRootCredentialGitignore,
-    inspectFlutterFirebaseOptions
+    inspectFlutterFirebaseOptions,
+    normalizeCredentialFiles,
+    syncProjectCredentialsFromSecrets
 } from '../core/project/firebase-credentials';
 
 export class EnvSetupManager {
@@ -87,20 +87,20 @@ export class EnvSetupManager {
         }
 
         console.log(chalk.cyan('\n   To configure, please drop the following files into this folder:'));
-        console.log(chalk.white('   - ') + chalk.bold('admin-sdk.json') + chalk.dim(' (Firebase Admin SDK)'));
-        console.log(chalk.white('   - ') + chalk.bold('firebase-sdk.js') + chalk.dim(' (Firebase Client SDK)'));
+        console.log(chalk.white('   - ') + chalk.bold('.secrets/admin-sdk.json') + chalk.dim(' (Firebase Admin SDK)'));
+        console.log(chalk.white('   - ') + chalk.bold('.secrets/firebase-sdk.js') + chalk.dim(' (Firebase Client SDK)'));
+        console.log(chalk.white('   - ') + chalk.bold('.secrets/client-secret-oauth.json') + chalk.dim(' (Google OAuth client export)'));
         console.log(chalk.dim('\n   Waiting for files... (Press Ctrl+C to cancel)'));
 
         // Poll for files
-        const adminSdkPath = path.join(process.cwd(), 'admin-sdk.json');
-        const clientSdkPath = path.join(process.cwd(), 'firebase-sdk.js');
-
         await new Promise<void>((resolve) => {
             const interval = setInterval(() => {
-                const hasAdmin = fs.existsSync(adminSdkPath) && fs.statSync(adminSdkPath).size > 0;
-                const hasClient = fs.existsSync(clientSdkPath) && fs.statSync(clientSdkPath).size > 0;
+                const normalized = normalizeCredentialFiles(process.cwd());
+                const hasAdmin = Boolean(normalized.adminSdkPath);
+                const hasClient = Boolean(normalized.clientSdkPath);
+                const hasOauth = Boolean(normalized.oauthClientPath);
 
-                if (hasAdmin && hasClient) {
+                if (hasAdmin && hasClient && hasOauth) {
                     clearInterval(interval);
                     console.log(chalk.green('\n✅ Configuration files detected!'));
                     setTimeout(resolve, 1000);
@@ -120,54 +120,38 @@ export class EnvSetupManager {
             }
         ]);
 
-        let envValues;
-        try {
-            envValues = buildEnvValuesFromCredentialFiles({
-                adminSdkPath,
-                clientSdkPath,
-                existingEnvContent: fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '',
-                geminiKey
-            });
-        } catch (e) {
-            console.log(chalk.red("Error parsing firebase-sdk.js. Make sure it's valid format."));
+        const framework = isFlutterProject ? 'flutter' : (isNextProject ? 'nextjs' : 'custom');
+        const syncResult = syncProjectCredentialsFromSecrets({
+            projectPath: process.cwd(),
+            framework,
+            geminiKey
+        });
+
+        if (!syncResult.performed) {
+            console.log(chalk.red('Error parsing credential files. Make sure admin-sdk.json, firebase-sdk.js, and client-secret-oauth.json are valid.'));
             return true;
         }
 
-        // Generate .env
-        let newEnvContent = buildEnvTemplate(envValues);
-        if (isNextProject) {
-            newEnvContent = `${newEnvContent}\n${buildNextPublicFirebaseBlock(envValues)}`;
-        }
-
-        fs.writeFileSync(envPath, newEnvContent);
-        console.log(chalk.green('✅ .env file generated successfully.'));
+        console.log(chalk.green('✅ Environment files generated successfully.'));
         ensureRootCredentialGitignore(process.cwd());
-        console.log(chalk.green('✅ .gitignore protects admin-sdk.json and firebase-sdk.js.'));
+        console.log(chalk.green('✅ .gitignore protects .secrets/ credentials.'));
 
-        // Generate .env.example (deduplicated template)
-        const envExamplePath = path.join(process.cwd(), '.env.example');
-        const envExampleValues = mergeEnvValues({}, {
-            OWNER_EMAIL: envValues.OWNER_EMAIL,
-            GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
-            FIREBASE_API_KEY: envValues.FIREBASE_API_KEY,
-            FIREBASE_AUTH_DOMAIN: envValues.FIREBASE_AUTH_DOMAIN,
-            FIREBASE_PROJECT_ID: envValues.FIREBASE_PROJECT_ID,
-            FIREBASE_STORAGE_BUCKET: envValues.FIREBASE_STORAGE_BUCKET,
-            FIREBASE_MESSAGING_SENDER_ID: envValues.FIREBASE_MESSAGING_SENDER_ID,
-            FIREBASE_APP_ID: envValues.FIREBASE_APP_ID,
-            FIREBASE_MEASUREMENT_ID: envValues.FIREBASE_MEASUREMENT_ID,
-            GEMINI_API_KEY: ''
-        });
-        let envExampleContent = buildEnvTemplate(envExampleValues);
-        if (isNextProject) {
-            envExampleContent = `${envExampleContent}\n${buildNextPublicFirebaseBlock(envExampleValues)}`;
+        if (syncResult.movedFiles.length > 0) {
+            console.log(chalk.cyan('\n📦 Sorted credential files'));
+            for (const moved of syncResult.movedFiles) {
+                console.log(chalk.gray(`   ${moved}`));
+            }
         }
 
-        fs.writeFileSync(envExamplePath, envExampleContent);
-        console.log(chalk.green('✅ .env.example file generated successfully.'));
+        if (syncResult.warnings.length > 0) {
+            console.log(chalk.yellow('\n⚠️  Credential warnings'));
+            for (const warning of syncResult.warnings) {
+                console.log(chalk.gray(`   ${warning}`));
+            }
+        }
 
         if (isFlutterProject) {
-            const projectId = envValues.FIREBASE_PROJECT_ID ?? '';
+            const projectId = syncResult.projectId ?? '';
             if (projectId) {
                 const flutterStatus = inspectFlutterFirebaseOptions(process.cwd(), projectId);
                 console.log(chalk.cyan('\n🪄 Flutter Firebase Status'));

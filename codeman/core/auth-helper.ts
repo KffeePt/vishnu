@@ -2,6 +2,8 @@ import { state } from '../core/state';
 import chalk from 'chalk';
 import path from 'path';
 import { UserConfigManager } from '../config/user-config';
+import { SessionTimerManager } from './session-timers';
+import { AuthTokenStore } from './auth/token-store';
 
 async function ensureProjectContext(projectPath: string) {
     if (!projectPath) return;
@@ -41,7 +43,29 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
     }
     await ensureProjectContext(projectPath);
 
-    const OWNER_BYPASS_TTL_MS = 30 * 60 * 1000;
+    const forcedReauthAt = SessionTimerManager.getConfig().forcedReauthAt || 0;
+    const storedTokens = AuthTokenStore.load();
+    const authWatermark = Math.max(
+        UserConfigManager.getLastAuth(),
+        UserConfigManager.getAuthBypassStartedAt(),
+        storedTokens?.updatedAt || 0
+    );
+    if (forcedReauthAt > 0 && authWatermark > 0 && authWatermark < forcedReauthAt) {
+        console.log(chalk.yellow('\n⚠️  Global session reset detected. Cached auth has been cleared.'));
+        state.authBypass = false;
+        state.rawIdToken = undefined;
+        state.user = undefined;
+        state.project.rootPath = '';
+        state.setProjectType('unknown');
+        state.shouldRestart = true;
+        state.restartTargetNode = 'ROOT';
+        process.env.CODEMAN_FORCE_LAUNCHER = 'true';
+        UserConfigManager.clearAuthState();
+        AuthTokenStore.clear();
+        state.tempMessage = chalk.yellow('Global session reset detected. Please sign in again.');
+        return false;
+    }
+
     const cachedUser = UserConfigManager.getCachedUser();
     const authMode = UserConfigManager.getAuthMode();
     const bypassExpiresAt = UserConfigManager.getAuthBypassExpiresAt();
@@ -113,11 +137,11 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
             }
 
             if (bypassChoice === 'bypass') {
-                const claimsPath = path.join(vishnuRoot, 'claims');
-                const serviceAccountPath = path.join(claimsPath, 'admin-sdk.json');
+                const secretsPath = path.join(vishnuRoot, '.secrets');
+                const serviceAccountPath = path.join(secretsPath, 'admin-sdk.json');
 
                 if (!serviceAccountPath || !(await import('fs')).existsSync(serviceAccountPath)) {
-                    console.log(chalk.red('\n🚫 Missing Vishnu admin service account (claims/admin-sdk.json).'));
+                    console.log(chalk.red('\n🚫 Missing Vishnu admin service account (.secrets/admin-sdk.json).'));
                     console.log(chalk.gray('   Cannot verify owner claim for bypass.'));
                     console.log(chalk.red('\n🚫 Owner bypass denied. Access blocked.'));
                     return false;
@@ -135,25 +159,29 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
                     console.log(chalk.cyan('\n🔐 Opening Vishnu owner login...'));
                     const success = await AuthService.login(state, vishnuAuth);
                     if (!success) {
-                        console.log(chalk.red('\n🚫 Owner bypass failed. Authentication cancelled or denied.'));
-                        state.authBypass = false;
-                        state.rawIdToken = undefined;
-                        return false;
-                    }
+                    console.log(chalk.red('\n🚫 Owner bypass failed. Authentication cancelled or denied.'));
+                    state.tempMessage = chalk.red('Owner bypass failed. Authentication cancelled or denied.');
+                    state.authBypass = false;
+                    state.rawIdToken = undefined;
+                    return false;
+                }
 
                     const isOwner = state.user?.role === 'owner';
                     const isAdmin = state.user?.isAdmin === true;
                     if (!isOwner && !isAdmin) {
                         console.log(chalk.red('\n🚫 Owner bypass denied. user is not owner/admin in Vishnu.'));
+                        state.tempMessage = chalk.red('Owner bypass denied. user is not owner/admin in Vishnu.');
                         state.authBypass = false;
                         state.rawIdToken = undefined;
                         return false;
                     }
 
                     state.authBypass = true;
-                    const bypassExpiresAt = Date.now() + OWNER_BYPASS_TTL_MS;
-                    UserConfigManager.setLastAuth(Date.now(), state.user, {
+                    const bypassStartedAt = Date.now();
+                    const bypassExpiresAt = bypassStartedAt + SessionTimerManager.getConfig().ownerBypassTimeoutMs;
+                    UserConfigManager.setLastAuth(bypassStartedAt, state.user, {
                         authMode: 'owner-bypass',
+                        authBypassStartedAt: bypassStartedAt,
                         authBypassExpiresAt: bypassExpiresAt
                     });
                     await ensureProjectContext(projectPath);
@@ -162,6 +190,7 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
                     return true;
                 } catch (err: any) {
                     console.log(chalk.red(`\n🚫 Owner bypass failed: ${err?.message || err}`));
+                    state.tempMessage = chalk.red(`Owner bypass failed: ${err?.message || err}`);
                     state.authBypass = false;
                     state.rawIdToken = undefined;
                     return false;
@@ -202,6 +231,7 @@ export async function checkAndSetupAuth(projectPath: string): Promise<boolean> {
         if (!isAuthenticated) {
             console.log(chalk.red('\n🚫 Authentication Failed or Cancelled.'));
             console.log(chalk.gray('   To access the session, you must authenticate successfully.'));
+            state.tempMessage = chalk.red('Authentication failed or was cancelled. Scroll up for the specific error.');
             return false;
         }
         await ensureProjectContext(projectPath);

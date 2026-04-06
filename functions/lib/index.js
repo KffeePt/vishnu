@@ -326,6 +326,8 @@ exports.verifyAuthentication = functions.https.onRequest((req, res) => {
 __exportStar(require("./auth-sync"), exports);
 __exportStar(require("./github-proxy"), exports);
 __exportStar(require("./github-webhook"), exports);
+__exportStar(require("./vishnu-gateway"), exports);
+__exportStar(require("./session-presence"), exports);
 // --- Payments ---
 var webhook_handler_1 = require("./payments/webhook-handler");
 Object.defineProperty(exports, "paymentWebhook", { enumerable: true, get: function () { return webhook_handler_1.paymentWebhook; } });

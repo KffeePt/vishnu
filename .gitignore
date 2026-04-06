@@ -16,8 +16,8 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Caim setting code
-claims/
+# Secrets
+.secrets/
 
 # VS Code
 .vscode/

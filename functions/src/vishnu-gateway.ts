@@ -28,7 +28,7 @@ export const vishnuGateway = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const { action, project, payload } = req.body || {};
+    const { action, project } = req.body || {};
 
     if (!action) {
       res.status(400).json({ status: 'error', error: 'Missing action' });

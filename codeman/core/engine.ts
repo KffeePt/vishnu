@@ -5,6 +5,9 @@ import { io, KeyHandler } from './io';
 import readline from 'readline';
 import { registry } from './registry';
 import { state } from './state';
+import { SessionTimerManager } from './session-timers';
+import { UserConfigManager } from '../config/user-config';
+import { AuthTokenStore } from './auth/token-store';
 
 
 export class Engine {
@@ -17,6 +20,8 @@ export class Engine {
     private transientMessage: string | null = null; // Temporary status for next frame
     private sessionExpired: boolean = false;
     private globalHandler: ((key: Buffer, str: string) => void) | null = null;
+    private forceLogoutSubscription: (() => void) | null = null;
+    private lastForcedReauthAt: number = 0;
 
     constructor() {
         this.globalHandler = this.handleGlobalInput.bind(this);
@@ -38,6 +43,27 @@ export class Engine {
         if (this.globalHandler) {
             io.consume(this.globalHandler);
         }
+    }
+
+    private triggerForcedLogout(reason: string) {
+        if (this.sessionExpired) return;
+        this.sessionExpired = true;
+        state.user = undefined;
+        state.authBypass = false;
+        state.rawIdToken = undefined;
+        state.project.rootPath = '';
+        state.setProjectType('unknown');
+        process.env.CODEMAN_FORCE_LAUNCHER = 'true';
+        UserConfigManager.clearAuthBypass();
+        AuthTokenStore.clear();
+        state.tempMessage = chalk.red(reason);
+        state.shouldRestart = true;
+        state.restartTargetNode = 'ROOT';
+        this.running = false;
+        io.clear();
+        console.log(chalk.bgRed.white(' GLOBAL SESSION RESET '));
+        console.log(chalk.red(reason));
+        console.log(chalk.gray('Returning everyone to the launcher...'));
     }
 
     async start(initialId: MenuId = 'ROOT') {
@@ -97,12 +123,29 @@ export class Engine {
         // Initial attach
         this.resumeGlobalListener();
 
+        this.lastForcedReauthAt = SessionTimerManager.getConfig().forcedReauthAt || 0;
+        this.forceLogoutSubscription = SessionTimerManager.subscribe((config) => {
+            const nextForcedAt = config.forcedReauthAt || 0;
+            if (nextForcedAt > this.lastForcedReauthAt) {
+                this.lastForcedReauthAt = nextForcedAt;
+                const authWatermark = Math.max(
+                    UserConfigManager.getLastAuth(),
+                    UserConfigManager.getAuthBypassStartedAt(),
+                    AuthTokenStore.load()?.updatedAt || 0
+                );
+                if (authWatermark > 0 && authWatermark < nextForcedAt) {
+                    this.triggerForcedLogout('Global session reset required. Please log in again.');
+                }
+            }
+        });
+
         // Inactivity Monitor (10 minutes)
         this.inactivityCheck = setInterval(async () => {
             // Check if user is logged in AND inactive AND not busy
-            if (state.user && !this.sessionExpired && !state.isBusy && (Date.now() - io.lastActivity > 60 * 60 * 1000)) {
-                this.sessionExpired = true;
-                state.user = undefined; // Unauthenticate
+                const inactivityLimit = SessionTimerManager.getConfig().projectInactivityMs;
+                if (state.user && !this.sessionExpired && !state.isBusy && (Date.now() - io.lastActivity > inactivityLimit)) {
+                    this.sessionExpired = true;
+                    state.user = undefined; // Unauthenticate
 
                 // 1. Force-resolve any pending inquirer prompt by emitting 'Enter'
                 process.stdin.emit('data', '\r');
@@ -114,7 +157,7 @@ export class Engine {
                 io.clear();
                 console.log('\n\n');
                 console.log(chalk.red.bold('  ⚠️  SESSION TIMED OUT ⚠️  '));
-                console.log(chalk.gray('  You have been inactive for 1 hour.'));
+                console.log(chalk.gray(`  You have been inactive for ${Math.round(inactivityLimit / 60000)} minutes.`));
                 console.log(chalk.white('\n  Returning to Launcher in...'));
 
                 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -230,6 +273,7 @@ export class Engine {
             console.error("Fatal Engine Crash:", fatalError);
         } finally {
             if (this.inactivityCheck) clearInterval(this.inactivityCheck);
+            if (this.forceLogoutSubscription) this.forceLogoutSubscription();
             this.pauseGlobalListener();
             this.shutdown();
         }

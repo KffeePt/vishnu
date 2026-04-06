@@ -1,36 +1,51 @@
-import { MenuDefinition } from '../../schemas/menu-schema';
+import { MenuDefinition, MenuOption } from '../../schemas/menu-schema';
+import { GlobalState } from '../../core/state';
 
 export const SettingsMenuDef: MenuDefinition = {
     id: 'settings',
     title: '⚙️  Global Settings',
-    type: 'static',
-    options: [
-        {
-            label: '⬆️  Update CodeMan',
-            value: 'update-codeman',
-            action: { type: 'navigate', target: 'update-menu' }
-        },
-        {
-            label: '🔑 Manage Gemini API Keys',
-            value: 'sys-gemini',
-            action: { type: 'script', handler: 'manageGeminiKeys' }
-        },
-        { label: '---', value: 'sep_admin', type: 'separator' },
-        {
+    type: 'dynamic',
+    options: async (state: GlobalState): Promise<MenuOption[]> => {
+        const options: MenuOption[] = [
+            {
+                label: '⬆️  Update CodeMan',
+                value: 'update-codeman',
+                action: { type: 'navigate', target: 'update-menu' }
+            },
+            {
+                label: '🔑 Manage Gemini API Keys',
+                value: 'sys-gemini',
+                action: { type: 'script', handler: 'manageGeminiKeys' }
+            },
+            {
+                label: '⏱️  Global Session Timers',
+                value: 'session-timers',
+                action: { type: 'script', handler: 'manageSessionTimers' }
+            }
+        ];
+
+        if (!state.project.rootPath) {
+            options.splice(1, 0, {
+                label: '🗃️  Sync .password-store (WSL syncpss)',
+                value: 'syncpss-wsl',
+                action: { type: 'script', handler: 'launchSyncPssWsl' }
+            });
+        }
+
+        options.push({ label: '---', value: 'sep_admin', type: 'separator' });
+        options.push({
             label: '🔧 Maintenance',
             value: 'maintenance',
             action: { type: 'script', handler: 'enterMaintenance' }
-        },
-        {
-            label: '🚀 Admin Deploy Options',
-            value: 'maintenance-deploy',
-            action: { type: 'script', handler: 'enterMaintenanceDeploy' }
-        },
-        { label: '---', value: 'sep1', type: 'separator' },
-        {
+        });
+
+        options.push({ label: '---', value: 'sep1', type: 'separator' });
+        options.push({
             label: '⬅️  Back',
             value: 'back',
             action: { type: 'back' }
-        }
-    ]
+        });
+
+        return options;
+    }
 };

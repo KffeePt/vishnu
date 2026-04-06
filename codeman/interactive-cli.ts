@@ -9,11 +9,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
-import { buildEnvTemplate, buildNextPublicFirebaseBlock, mergeEnvValues } from './core/project/env-template';
 import {
-  buildEnvValuesFromCredentialFiles,
+  detectFramework,
   ensureRootCredentialGitignore,
-  inspectFlutterFirebaseOptions
+  inspectFlutterFirebaseOptions,
+  normalizeCredentialFiles,
+  syncProjectCredentialsFromSecrets
 } from './core/project/firebase-credentials';
 import { registry } from './core/registry';
 import { Engine } from './core/engine';
@@ -62,11 +63,9 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
 
   const localConfigPath = path.join(process.cwd(), '.codeman.json');
   const envPath = path.join(process.cwd(), '.env');
-  const isFlutterProject = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
-  const isNextProject =
-    fs.existsSync(path.join(process.cwd(), 'next.config.js')) ||
-    fs.existsSync(path.join(process.cwd(), 'next.config.mjs')) ||
-    fs.existsSync(path.join(process.cwd(), 'next.config.ts'));
+  const framework = detectFramework(process.cwd());
+  const isFlutterProject = framework === 'flutter';
+  const isNextProject = framework === 'nextjs';
   const isNextOrFlutter = isFlutterProject || isNextProject;
 
   // 1. Determine Intent
@@ -113,21 +112,21 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     console.clear();
     console.log(chalk.bold.yellow('\n⚠️  Environment Not Configured (Cloud Features Enabled)'));
     console.log(chalk.gray('   This project is configured to use Cloud/Firebase features but is missing .env.'));
-    console.log(chalk.cyan('\n   To configure it automatically, please drop the following files into this folder:'));
-    console.log(chalk.white('   - ') + chalk.bold('admin-sdk.json') + chalk.dim(' (Firebase Admin SDK)'));
-    console.log(chalk.white('   - ') + chalk.bold('firebase-sdk.js') + chalk.dim(' (Firebase Client SDK)'));
+    console.log(chalk.cyan('\n   To configure it automatically, please drop the following files into the .secrets folder:'));
+    console.log(chalk.white('   - ') + chalk.bold('.secrets/admin-sdk.json') + chalk.dim(' (Firebase Admin SDK)'));
+    console.log(chalk.white('   - ') + chalk.bold('.secrets/firebase-sdk.js') + chalk.dim(' (Firebase Client SDK)'));
+    console.log(chalk.white('   - ') + chalk.bold('.secrets/client_secret_oauth.json') + chalk.dim(' (Google OAuth client export)'));
     console.log(chalk.dim('\n   Waiting for files... (Press Ctrl+C to cancel)'));
 
     // Poll for files
-    const adminSdkPath = path.join(process.cwd(), 'admin-sdk.json');
-    const clientSdkPath = path.join(process.cwd(), 'firebase-sdk.js');
-
     await new Promise<void>((resolve) => {
       const interval = setInterval(() => {
-        const hasAdmin = fs.existsSync(adminSdkPath) && fs.statSync(adminSdkPath).size > 0;
-        const hasClient = fs.existsSync(clientSdkPath) && fs.statSync(clientSdkPath).size > 0;
+        const normalized = normalizeCredentialFiles(process.cwd());
+        const hasAdmin = Boolean(normalized.adminSdkPath);
+        const hasClient = Boolean(normalized.clientSdkPath);
+        const hasOauth = Boolean(normalized.oauthClientPath);
 
-        if (hasAdmin && hasClient) {
+        if (hasAdmin && hasClient && hasOauth) {
           clearInterval(interval);
           console.log(chalk.green('\n✅ Configuration files detected!'));
           setTimeout(resolve, 1000);
@@ -147,45 +146,38 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
       }
     ]);
 
-    const envValues = buildEnvValuesFromCredentialFiles({
-      adminSdkPath,
-      clientSdkPath,
-      existingEnvContent: fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '',
+    const syncResult = syncProjectCredentialsFromSecrets({
+      projectPath: process.cwd(),
+      framework,
       geminiKey
     });
-    let envContent = buildEnvTemplate(envValues).trim();
-    if (isNextProject) {
-      envContent = `${envContent}\n\n${buildNextPublicFirebaseBlock(envValues).trim()}`;
+
+    if (!syncResult.performed) {
+      console.log(chalk.red('Error parsing credential files. Make sure admin-sdk.json, firebase-sdk.js, and client_secret_oauth.json are valid.'));
+      return true;
     }
 
-    fs.writeFileSync(envPath, envContent);
-    console.log(chalk.green('✅ .env file generated successfully.'));
-
-    const envExamplePath = path.join(process.cwd(), '.env.example');
-    const envExampleValues = mergeEnvValues({}, {
-      OWNER_EMAIL: envValues.OWNER_EMAIL,
-      GOOGLE_APPLICATION_CREDENTIALS: 'admin-sdk.json',
-      FIREBASE_API_KEY: envValues.FIREBASE_API_KEY,
-      FIREBASE_AUTH_DOMAIN: envValues.FIREBASE_AUTH_DOMAIN,
-      FIREBASE_PROJECT_ID: envValues.FIREBASE_PROJECT_ID,
-      FIREBASE_STORAGE_BUCKET: envValues.FIREBASE_STORAGE_BUCKET,
-      FIREBASE_MESSAGING_SENDER_ID: envValues.FIREBASE_MESSAGING_SENDER_ID,
-      FIREBASE_APP_ID: envValues.FIREBASE_APP_ID,
-      FIREBASE_MEASUREMENT_ID: envValues.FIREBASE_MEASUREMENT_ID,
-      GEMINI_API_KEY: ''
-    });
-    let envExampleContent = buildEnvTemplate(envExampleValues).trim();
-    if (isNextProject) {
-      envExampleContent = `${envExampleContent}\n\n${buildNextPublicFirebaseBlock(envExampleValues).trim()}`;
-    }
-    fs.writeFileSync(envExamplePath, `${envExampleContent}\n`);
-    console.log(chalk.green('✅ .env.example file generated successfully.'));
+    console.log(chalk.green('✅ Environment files generated successfully.'));
 
     ensureRootCredentialGitignore(process.cwd());
-    console.log(chalk.green('✅ .gitignore protects admin-sdk.json and firebase-sdk.js.'));
+    console.log(chalk.green('✅ .gitignore protects local credential files.'));
+
+    if (syncResult.movedFiles.length > 0) {
+      console.log(chalk.cyan('\n📦 Sorted credential files'));
+      for (const moved of syncResult.movedFiles) {
+        console.log(chalk.gray(`   ${moved}`));
+      }
+    }
+
+    if (syncResult.warnings.length > 0) {
+      console.log(chalk.yellow('\n⚠️  Credential warnings'));
+      for (const warning of syncResult.warnings) {
+        console.log(chalk.gray(`   ${warning}`));
+      }
+    }
 
     if (isFlutterProject) {
-      const projectId = envValues.FIREBASE_PROJECT_ID ?? '';
+      const projectId = syncResult.projectId ?? '';
       if (projectId) {
         const flutterStatus = inspectFlutterFirebaseOptions(process.cwd(), projectId);
         console.log(chalk.cyan('\n🪄 Flutter Firebase Status'));
@@ -568,6 +560,19 @@ async function bootstrap() {
     const handled = await handleCLIArgs();
     if (handled) return;
 
+    const fs = await import('fs');
+    const windir = path.resolve(process.env.WINDIR || 'C:\\Windows').toLowerCase();
+    const currentCwd = path.resolve(process.cwd()).toLowerCase();
+    const safeLauncherRoot = path.resolve(__dirname, '..');
+
+    if (currentCwd.startsWith(windir)) {
+      try {
+        process.chdir(process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : safeLauncherRoot);
+      } catch {
+        process.chdir(safeLauncherRoot);
+      }
+    }
+
     // Clear terminal completely (screen + scrollback) for a clean restart experience
     process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
 
@@ -577,6 +582,7 @@ async function bootstrap() {
     }
 
     const isRestart = process.env.CODEMAN_RESTART_FROM_MENU === 'true';
+    const forceLauncher = process.env.CODEMAN_FORCE_LAUNCHER === 'true';
     let targetPath: string | null = null;
 
     const { GlobalStateManager } = await import('./managers/global-state-manager');
@@ -587,13 +593,16 @@ async function bootstrap() {
 
     // Check for explicit start node passed via args
     const explicitNode = (process.argv[2] && process.argv[2] !== '--') ? process.argv[2] : null;
+    const launcherRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : safeLauncherRoot;
 
-    if (isRestart && explicitNode !== 'ROOT') {
+    if (isRestart && explicitNode !== 'ROOT' && !forceLauncher) {
       // Auto-resume from last known good state ONLY if we aren't explicitly going to ROOT (Launcher)
       const lastProject = manager.getLastActive();
       if (lastProject && lastProject.path) {
         targetPath = lastProject.path;
       }
+    } else if (forceLauncher || explicitNode === 'ROOT') {
+      targetPath = launcherRoot;
     } else {
       // Universal Mode or Clean Restart: We default to current directory.
       targetPath = process.cwd();
@@ -621,7 +630,6 @@ async function bootstrap() {
     // console.clear(); // Removed aggressive clear. Let the next UI component handle it or keep history.
 
     // Check for clean launcher force flag
-    const forceLauncher = process.env.CODEMAN_FORCE_LAUNCHER === 'true';
     if (forceLauncher) {
       delete process.env.CODEMAN_FORCE_LAUNCHER; // Cleanup for subsequent runs
     }
@@ -650,7 +658,6 @@ async function bootstrap() {
 
     // If cloud features are enabled, we might want to check context or auth
     // SKIP for Flutter projects to avoid browser popup as requested
-    const fs = await import('fs');
     const isFlutter = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
 
     // Set project type in global state (used by menus & link-project wizard)

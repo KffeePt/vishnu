@@ -15,6 +15,18 @@ export async function restartCLI(startNode?: string): Promise<void> {
 
     // We assign the async operation to the singleton promise
     restartPromise = (async () => {
+        const fs = await import('fs');
+        const windir = path.resolve(process.env.WINDIR || 'C:\\Windows').toLowerCase();
+        const currentCwd = path.resolve(process.cwd()).toLowerCase();
+        const safeCwd = process.env.VISHNU_ROOT
+            ? path.resolve(process.env.VISHNU_ROOT)
+            : path.resolve(__dirname, '..');
+        if (currentCwd.startsWith(windir)) {
+            try {
+                process.chdir(safeCwd);
+            } catch { }
+        }
+
         // Release input control via IO Manager
         const { io } = await import('./io');
         io.clear(); // Clear screen to prevent text leakage
@@ -24,7 +36,6 @@ export async function restartCLI(startNode?: string): Promise<void> {
         // ---------------------------------------------------------
         // LOCK HANDOFF FIX (Silent)
         // ---------------------------------------------------------
-        const fs = await import('fs');
         const lockFile = path.join(process.cwd(), '.codeman.lock');
 
         // We must release the lock NOW so the child process can acquire it.
@@ -43,14 +54,15 @@ export async function restartCLI(startNode?: string): Promise<void> {
         if (startNode) {
             args.push(startNode);
         }
+        const launchToLauncher = startNode === 'ROOT' || process.env.CODEMAN_FORCE_LAUNCHER === 'true';
+        const childCwd = launchToLauncher ? safeCwd : process.cwd();
 
         // Return the promise that waits for the child process
         return new Promise<void>((resolve, reject) => {
             const child = spawn('npx', args, {
                 stdio: 'inherit',
                 shell: true, // Required for npx on Windows
-                // Keep current CWD so we stay in the project context
-                cwd: process.cwd(),
+                cwd: childCwd,
                 env: {
                     ...process.env,
                     FORCE_COLOR: '1',

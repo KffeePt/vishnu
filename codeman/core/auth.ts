@@ -10,6 +10,7 @@ import fs from 'fs';
 import chalk from 'chalk';
 import { AuthTokenStore } from './auth/token-store';
 import { inferRoleFromClaims } from './security/role-verifier';
+import { SessionTimerManager } from './session-timers';
 
 // Helper to open browser
 const openBrowser = async (url: string) => {
@@ -41,9 +42,7 @@ export class AuthService {
     private static server: http.Server | null = null;
     private static PORT = 3005;
     private static currentNonce: string | null = null;
-    private static LOGIN_TIMEOUT_MS = 2 * 60 * 1000;
     private static loginWindowStartedAt: number | null = null;
-    private static loginWindowExpiresAt: number | null = null;
     private static loginWindowPort: number | null = null;
 
     private static async killPort(port: number) {
@@ -94,13 +93,16 @@ export class AuthService {
 
         // 1. Initialize Admin SDK if needed (or if we are switching projects)
         const targetProjectId = options.projectId || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+        const availableApps = admin.apps.filter((app): app is admin.app.App => !!app);
+        let defaultApp = availableApps.find(app => app.name === '[DEFAULT]') || null;
 
-        if (admin.apps.length > 0 && admin.app().options.projectId !== targetProjectId) {
-            // Delete existing app to re-initialize with different credentials if project mismatch
-            await admin.app().delete();
+        if (defaultApp && defaultApp.options.projectId !== targetProjectId) {
+            // Delete only the default app so named helper apps (like session timers) stay alive.
+            await defaultApp.delete();
+            defaultApp = null;
         }
 
-        if (admin.apps.length === 0) {
+        if (!defaultApp) {
             try {
                 // Try Options first, then ENV
                 const serviceAccount = options.serviceAccount || process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -148,6 +150,7 @@ export class AuthService {
                         credential: admin.credential.applicationDefault()
                     });
                 }
+                defaultApp = admin.apps.filter((app): app is admin.app.App => !!app).find(app => app.name === '[DEFAULT]') || null;
             } catch (error) {
                 console.error("❌ Failed to initialize Firebase Admin SDK. Check Credentials.");
                 // Log strictly for debug
@@ -158,6 +161,7 @@ export class AuthService {
 
         const apiKey = options.apiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY;
         const projectId = targetProjectId || 'unknown-project';
+        const globalReauthAt = SessionTimerManager.getConfig().forcedReauthAt || 0;
 
         const resolveUserRole = async (decodedToken: admin.auth.DecodedIdToken, idToken: string): Promise<string | null> => {
             const email = decodedToken.email || 'unknown';
@@ -191,7 +195,7 @@ export class AuthService {
         };
 
         // Attempt token restore (and refresh) before opening browser
-        const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey);
+        const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey, globalReauthAt);
         if (storedIdToken) {
             try {
                 const decodedToken = await admin.auth().verifyIdToken(storedIdToken);
@@ -219,9 +223,32 @@ export class AuthService {
         }
 
         this.loginWindowStartedAt = Date.now();
-        this.loginWindowExpiresAt = this.loginWindowStartedAt + this.LOGIN_TIMEOUT_MS;
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        let stopTimerListener: (() => void) | null = null;
 
         return new Promise<boolean>((resolve) => {
+            const scheduleTimeout = () => {
+                if (!this.loginWindowStartedAt) return;
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+
+                const timeoutMs = SessionTimerManager.getConfig().browserLoginTimeoutMs;
+                const elapsed = Date.now() - this.loginWindowStartedAt;
+                const remaining = Math.max(0, timeoutMs - elapsed);
+
+                timeoutHandle = setTimeout(() => {
+                    if (this.server) {
+                        console.log(chalk.red('\n⌛ Auth timed out. No login received.'));
+                        console.log(chalk.gray('   Please retry and complete the browser login.'));
+                        this.closeServer();
+                        resolve(false);
+                    }
+                }, remaining);
+            };
+
+            stopTimerListener = SessionTimerManager.subscribe(() => {
+                scheduleTimeout();
+            });
+
             // 2. Start Local Server to catch token
             this.server = http.createServer(async (req, res) => {
                 const parsedUrl = url.parse(req.url || '', true);
@@ -653,17 +680,6 @@ export class AuthService {
                 });
             };
 
-            const startTimeout = () => {
-                setTimeout(() => {
-                    if (this.server) {
-                        console.log(chalk.red('\n⌛ Auth timed out. No login received.'));
-                        console.log(chalk.gray('   Please retry and complete the browser login.'));
-                        this.closeServer();
-                        resolve(false);
-                    }
-                }, this.LOGIN_TIMEOUT_MS);
-            };
-
             this.server.on('error', (e: any) => {
                 if (e.code === 'EADDRINUSE') {
                     console.error(chalk.red(`\n❌ Port ${this.PORT} is still in use.`));
@@ -671,7 +687,6 @@ export class AuthService {
                     if (nextPort <= 3010) {
                         console.log(chalk.yellow(`Retrying on port ${nextPort}...`));
                         tryListen(nextPort);
-                        startTimeout();
                         return;
                     }
                 } else {
@@ -682,22 +697,25 @@ export class AuthService {
             });
 
             tryListen(this.PORT);
-            startTimeout();
+            scheduleTimeout();
         }).finally(() => {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            if (stopTimerListener) stopTimerListener();
             this.clearLoginWindow();
         });
     }
 
     static getLoginWindowStatus(): LoginWindowStatus {
         const startedAt = this.loginWindowStartedAt;
-        const expiresAt = this.loginWindowExpiresAt;
+        const timeoutMs = SessionTimerManager.getConfig().browserLoginTimeoutMs;
+        const expiresAt = startedAt ? startedAt + timeoutMs : null;
         const active = !!startedAt && !!expiresAt && expiresAt > Date.now();
 
         return {
             active,
             startedAt,
             expiresAt,
-            timeoutMs: this.LOGIN_TIMEOUT_MS,
+            timeoutMs,
             port: active ? this.loginWindowPort : null
         };
     }
@@ -711,7 +729,6 @@ export class AuthService {
 
     private static clearLoginWindow() {
         this.loginWindowStartedAt = null;
-        this.loginWindowExpiresAt = null;
         this.loginWindowPort = null;
     }
 }

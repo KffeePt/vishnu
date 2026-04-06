@@ -6,9 +6,14 @@ export const MaintenanceMenuDef: MenuDefinition = {
     title: '🔧 Maintenance & Admin',
     type: 'dynamic',
     options: async (state: GlobalState) => {
-        const user = state.user;
-        const isAdmin = user?.isAdmin || false;
-        
+        const { SessionTimerManager } = await import('../../core/session-timers');
+        if (!SessionTimerManager.hasActiveOwnerSession()) {
+            return [
+                { label: '⚠️  Owner session required', value: 'sep_notice', type: 'separator' },
+                { label: '⬅️  Back', value: 'back', action: { type: 'back' } }
+            ];
+        }
+
         const opts: MenuOption[] = [];
 
         opts.push({ label: '--- Release & Deploy (Admin) ---', value: 'sep1', type: 'separator' });

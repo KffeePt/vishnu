@@ -103,6 +103,16 @@ registerScript('restartCLI', async () => {
     state.restartTargetNode = 'ROOT'; // Clean restart to Launcher
 });
 
+registerScript('launchSyncPssWsl', async () => {
+    const { launchSyncPssInWsl } = await import('../utils/syncpss-launcher');
+    const ok = await launchSyncPssInWsl();
+    if (!ok) {
+        const inquirer = (await import('inquirer')).default;
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
+    }
+    return 'settings';
+});
+
 registerScript('toggleCloudFeatures', async () => {
     const configPath = path.join(process.cwd(), '.codeman.json');
     let config: any = {};
@@ -133,9 +143,10 @@ registerScript('updateRepair', async () => {
     const { spawn } = await import('child_process');
     const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
+    const fsExtra = (await import('fs-extra')).default;
 
     console.log(chalk.yellow('\n🛠️  Repairing CodeMan (Force Pull/Reset)...'));
-    const rootDir = process.cwd();
+    const rootDir = resolveWorkspaceRoot(process.cwd());
     console.log(chalk.gray(`Target: ${rootDir}`));
     try {
         const { execSync } = await import('child_process');
@@ -153,15 +164,78 @@ registerScript('updateRepair', async () => {
         child.on('close', (code) => resolve(code === 0));
     });
 
+    const runInstall = async (targetDir: string): Promise<boolean> => {
+        const lockPath = path.join(targetDir, 'package-lock.json');
+        const shrinkwrapPath = path.join(targetDir, 'npm-shrinkwrap.json');
+        const pkgPath = path.join(targetDir, 'package.json');
+        if (!await fsExtra.pathExists(pkgPath)) return true;
+
+        const hasLock = await fsExtra.pathExists(lockPath) || await fsExtra.pathExists(shrinkwrapPath);
+        const cmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+        const args = hasLock ? ['ci'] : ['install'];
+        console.log(chalk.cyan(`Installing dependencies in ${path.relative(rootDir, targetDir) || '.'} using npm ${args[0]}...`));
+        return await new Promise<boolean>((resolve) => {
+            const child = spawn(cmd, args, { stdio: 'inherit', shell: true, cwd: targetDir });
+            child.on('close', (code) => resolve(code === 0));
+        });
+    };
+
+    const detectTrackedBranch = async (): Promise<string> => {
+        try {
+            const { execSync } = await import('child_process');
+            const currentBranch = execSync('git branch --show-current', { cwd: rootDir, stdio: 'pipe' }).toString().trim();
+            if (currentBranch) {
+                return currentBranch;
+            }
+        } catch { }
+
+        try {
+            const { execSync } = await import('child_process');
+            const upstream = execSync('git rev-parse --abbrev-ref --symbolic-full-name @{u}', { cwd: rootDir, stdio: 'pipe' }).toString().trim();
+            if (upstream) {
+                return upstream.replace(/^origin\//, '');
+            }
+        } catch { }
+
+        try {
+            const { execSync } = await import('child_process');
+            const head = execSync('git remote show origin', { cwd: rootDir, stdio: 'pipe' }).toString();
+            const match = head.match(/HEAD branch:\s*(\S+)/);
+            if (match?.[1]) {
+                return match[1];
+            }
+        } catch { }
+
+        return 'main';
+    };
+
     console.log(chalk.blue('Fetching...'));
     await run('git', ['fetch', '--all']);
+    const branch = await detectTrackedBranch();
+    console.log(chalk.gray(`Tracked branch: origin/${branch}`));
     console.log(chalk.blue('Resetting...'));
-    console.log(chalk.blue('Resetting...'));
-    await run('git', ['reset', '--hard', 'origin/main']);
+    await run('git', ['reset', '--hard', `origin/${branch}`]);
     console.log(chalk.blue('Cleaning untracked files...'));
     await run('git', ['clean', '-fd']); // Ensure it's a true "Incoming/Force" state
+    const rootInstallOk = await runInstall(rootDir);
+    if (!rootInstallOk) {
+        console.log(chalk.red('\n❌ Dependency reinstall failed in the repo root.'));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+        return 'settings';
+    }
+
+    const dashboardDir = path.join(rootDir, 'dashboard');
+    if (await fsExtra.pathExists(path.join(dashboardDir, 'package.json'))) {
+        const dashboardInstallOk = await runInstall(dashboardDir);
+        if (!dashboardInstallOk) {
+            console.log(chalk.red('\n❌ Dependency reinstall failed in dashboard/.'));
+            await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+            return 'settings';
+        }
+    }
+
     console.log(chalk.blue('Pulling...'));
-    const success = await run('git', ['pull']);
+    const success = await run('git', ['pull', '--ff-only', 'origin', branch]);
 
     if (success) {
         console.log(chalk.green('\n✅ Repair successful! Restarting CodeMan automatically...'));
@@ -182,7 +256,7 @@ registerScript('updateSync', async () => {
     const inquirer = (await import('inquirer')).default;
 
     console.log(chalk.yellow('\n🔄 Syncing CodeMan (Push & Pull)...'));
-    const rootDir = process.cwd();
+    const rootDir = resolveWorkspaceRoot(process.cwd());
     console.log(chalk.gray(`Target: ${rootDir}`));
     try {
         const { execSync } = await import('child_process');
@@ -241,14 +315,231 @@ registerScript('setupFirebaseAuth', async () => {
 });
 
 registerScript('showSessionInfo', async (args?: { returnTo?: string }) => {
-    const inquirer = (await import('inquirer')).default;
-    const { printSessionInfo } = await import('../core/session-info');
+    const { runSessionInfoViewer } = await import('../core/session-info');
 
-    printSessionInfo();
-    console.log('');
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    await runSessionInfoViewer();
 
     return args?.returnTo || 'config';
+});
+
+registerScript('manageSessionTimers', async () => {
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+    const { state } = await import('../core/state');
+    const {
+        SessionTimerManager,
+        printTimerConfigDetails
+    } = await import('../core/session-timers');
+
+    const MIN_NON_ZERO_MS = 59 * 1000;
+    const toNumberOrZero = (input: string) => {
+        const trimmed = (input || '').trim();
+        if (!trimmed) return 0;
+        const parsed = Number(trimmed);
+        return Number.isInteger(parsed) && parsed >= 0 ? parsed : NaN;
+    };
+    const isIntegerOrBlank = (input: string) => {
+        const trimmed = (input || '').trim();
+        if (!trimmed) return true;
+        return /^\d+$/.test(trimmed);
+    };
+    const splitDuration = (ms: number) => {
+        const safe = Math.max(0, Math.floor(ms));
+        const hours = Math.floor(safe / 3600000);
+        const minutes = Math.floor((safe % 3600000) / 60000);
+        const seconds = Math.floor((safe % 60000) / 1000);
+        return { hours, minutes, seconds };
+    };
+    const composeDuration = (hours: number, minutes: number, seconds: number) => {
+        const total = (hours * 3600000) + (minutes * 60000) + (seconds * 1000);
+        if (total > 0 && total < MIN_NON_ZERO_MS) {
+            throw new Error('Minimum non-zero duration is 59 seconds.');
+        }
+        if (total <= 0) {
+            throw new Error('Timer duration cannot be zero. Use at least 59 seconds.');
+        }
+        return total;
+    };
+    const promptDuration = async (label: string, currentMs: number) => {
+        const current = splitDuration(currentMs);
+        const answers = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'hours',
+                message: `${label} hours (whole numbers only, blank = 0):`,
+                default: current.hours > 0 ? String(current.hours) : '',
+                validate: (input: string) => {
+                    return isIntegerOrBlank(input) ? true : 'Enter a whole number or leave blank for 0.';
+                }
+            },
+            {
+                type: 'input',
+                name: 'minutes',
+                message: `${label} minutes (whole numbers only, blank = 0):`,
+                default: current.minutes > 0 ? String(current.minutes) : '',
+                validate: (input: string) => {
+                    return isIntegerOrBlank(input) ? true : 'Enter a whole number or leave blank for 0.';
+                }
+            },
+            {
+                type: 'input',
+                name: 'seconds',
+                message: `${label} seconds (whole numbers only, blank = 0):`,
+                default: current.seconds > 0 ? String(current.seconds) : '',
+                validate: (input: string) => {
+                    return isIntegerOrBlank(input) ? true : 'Enter a whole number or leave blank for 0.';
+                }
+            }
+        ]);
+
+        const hours = toNumberOrZero(answers.hours);
+        const minutes = toNumberOrZero(answers.minutes);
+        const seconds = toNumberOrZero(answers.seconds);
+        return composeDuration(hours, minutes, seconds);
+    };
+
+    await SessionTimerManager.startRealtimeSync({
+        projectId: state.project.id || process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || undefined
+    });
+
+    const canEditTimers = SessionTimerManager.isOwner();
+
+    while (true) {
+        console.clear();
+        printTimerConfigDetails('⏱️  Global Session Timers', SessionTimerManager.getConfig());
+        console.log(chalk.gray('This controls the live timers used by all clients that sync from RTDB.'));
+        if (!canEditTimers) {
+            console.log(chalk.yellow('\nRead-only mode: only the project owner can edit the global timers.'));
+        }
+
+        const activeSessions = SessionTimerManager.getActiveSessions();
+        console.log(chalk.bold('\nActive Sessions'));
+        if (activeSessions.length === 0) {
+            console.log(chalk.gray('  No active sessions reported yet.'));
+        } else {
+            activeSessions.slice(0, 6).forEach((session) => {
+                const owner = session.userEmail || session.uid || 'unknown';
+                const project = session.projectId || session.projectPath || 'unknown project';
+                const terminal = session.terminalLabel || session.terminalId || 'terminal unknown';
+                const remainingMs = Math.max(0, session.expiresAt - Date.now());
+                const statusColor = session.status === 'expired'
+                    ? chalk.redBright
+                    : remainingMs <= 60 * 1000
+                        ? chalk.yellowBright
+                        : chalk.greenBright;
+                console.log(`  ${statusColor(session.status)} ${chalk.bold(owner)} ${chalk.gray('•')} ${project} ${chalk.gray('•')} ${chalk.cyanBright(terminal)} ${chalk.gray('•')} ${Math.max(0, Math.floor(remainingMs / 1000))}s left`);
+            });
+            if (activeSessions.length > 6) {
+                console.log(chalk.gray(`  ... and ${activeSessions.length - 6} more`));
+            }
+        }
+
+        const choices: Array<{ name: string; value: string }> = [
+            { name: '🔄 Refresh from backend', value: 'refresh' }
+        ];
+
+        if (canEditTimers) {
+            choices.push({ name: '✏️  Edit a timer', value: 'edit' });
+            choices.push({ name: '☁️  Push current timers to RTDB + Firestore', value: 'push-current' });
+            choices.push({ name: '☠️  Nuke sessions & require relogin', value: 'nuke' });
+        }
+
+        choices.push({ name: '⬅️  Back', value: 'back' });
+
+        const action = await inquirer.prompt([{
+            type: 'list',
+            name: 'action',
+            message: 'Timer settings:',
+            choices
+        }]).then((a) => a.action);
+
+        if (action === 'back') {
+            return 'settings';
+        }
+
+        if (action === 'refresh') {
+            await SessionTimerManager.refreshFromRemote();
+            continue;
+        }
+
+        if (!canEditTimers) {
+            console.log(chalk.red('\nOnly the owner can edit global timers.'));
+            await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
+            continue;
+        }
+
+        if (action === 'push-current') {
+            try {
+                await SessionTimerManager.setGlobalTimers(SessionTimerManager.getConfig());
+                console.log(chalk.green('\n✅ Current timers synced and all active sessions were cleared.'));
+            } catch (err: any) {
+                console.log(chalk.red(`\n❌ Failed to sync timers: ${err?.message || err}`));
+            }
+            await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
+            continue;
+        }
+
+        if (action === 'nuke') {
+            try {
+                await SessionTimerManager.forceLogoutAll();
+                console.log(chalk.green('\n✅ All active sessions cleared and everyone must log in again.'));
+            } catch (err: any) {
+                console.log(chalk.red(`\n❌ Failed to nuke sessions: ${err?.message || err}`));
+            }
+            await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
+            continue;
+        }
+
+        if (action === 'edit') {
+            const current = SessionTimerManager.getConfig();
+            const timerChoice = await inquirer.prompt([{
+                type: 'list',
+                name: 'timer',
+                message: 'Which timer do you want to edit?',
+                choices: [
+                    { name: `Project inactivity logout (${Math.max(1, Math.round(current.projectInactivityMs / 60000))} min)`, value: 'project' },
+                    { name: `Browser auth login timeout (${Math.max(1, Math.round(current.browserLoginTimeoutMs / 60000))} min)`, value: 'browser' },
+                    { name: `Owner bypass timeout (${Math.max(1, Math.round(current.ownerBypassTimeoutMs / 60000))} min)`, value: 'bypass' },
+                    { name: `Token refresh skew (${Math.max(1, Math.round(current.tokenRefreshSkewMs / 60000))} min)`, value: 'skew' },
+                    { name: '⬅️  Cancel', value: 'cancel' }
+                ]
+            }]).then((a) => a.timer);
+
+            if (timerChoice === 'cancel') {
+                continue;
+            }
+
+            const promptLabels: Record<string, { label: string; current: number }> = {
+                project: { label: 'Project inactivity logout', current: current.projectInactivityMs },
+                browser: { label: 'Browser auth login timeout', current: current.browserLoginTimeoutMs },
+                bypass: { label: 'Owner bypass timeout', current: current.ownerBypassTimeoutMs },
+                skew: { label: 'Token refresh skew', current: current.tokenRefreshSkewMs }
+            };
+
+            const selected = promptLabels[timerChoice];
+            const nextMs = await promptDuration(selected.label, selected.current);
+            const timerKey = timerChoice === 'project'
+                ? 'projectInactivityMs'
+                : timerChoice === 'browser'
+                    ? 'browserLoginTimeoutMs'
+                    : timerChoice === 'bypass'
+                        ? 'ownerBypassTimeoutMs'
+                        : 'tokenRefreshSkewMs';
+            const nextConfig: Partial<ReturnType<typeof SessionTimerManager.getConfig>> = {
+                [timerKey]: nextMs
+            };
+
+            console.log(chalk.gray('\nSaving local draft timer settings...'));
+            try {
+                SessionTimerManager.updateLocalTimers(nextConfig);
+                console.log(chalk.green('✅ Local timer draft updated. Use "Push current timers" to apply and relogin everyone.'));
+            } catch (err: any) {
+                console.log(chalk.red(`❌ Failed to update local draft: ${err?.message || err}`));
+            }
+
+            await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
+        }
+    }
 });
 
 // --- Specific Handlers Updates ---
@@ -263,6 +554,8 @@ registerScript('useCurrentFolder', async () => {
 });
 
 registerScript('closeProject', async () => {
+    const { SessionTimerManager } = await import('../core/session-timers');
+    await SessionTimerManager.stopPresence();
     state.project.rootPath = '';
     state.setProjectType('unknown');
 });
@@ -1397,6 +1690,28 @@ async function detectNodeRunner(projectRoot: string): Promise<'npm' | 'bun'> {
     return 'npm';
 }
 
+function resolveWorkspaceRoot(startPath: string): string {
+    let current = path.resolve(startPath);
+
+    while (true) {
+        const packagePath = path.join(current, 'package.json');
+        const codemanDir = path.join(current, 'codeman');
+        const dashboardDir = path.join(current, 'dashboard');
+        const firebaseJson = path.join(current, 'firebase.json');
+
+        if (fs.existsSync(packagePath) && (fs.existsSync(codemanDir) || fs.existsSync(dashboardDir) || fs.existsSync(firebaseJson))) {
+            return current;
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return fs.existsSync(packagePath) ? current : path.resolve(startPath);
+        }
+
+        current = parent;
+    }
+}
+
 async function ensureNodeToolchain(projectRoot: string, requiredPackages: string[]): Promise<boolean> {
     const pkgPath = path.join(projectRoot, 'package.json');
     if (!fs.existsSync(pkgPath)) {
@@ -1549,6 +1864,102 @@ async function runReleaseBuild(projectRoot: string, projectType: string): Promis
     }
 
     return true;
+}
+
+interface NpmAuditSummary {
+    low: number;
+    moderate: number;
+    high: number;
+    critical: number;
+    total: number;
+}
+
+function summarizeAuditMetadata(text: string): NpmAuditSummary | null {
+    try {
+        const parsed = JSON.parse(text);
+        const vulnerabilities = parsed?.metadata?.vulnerabilities;
+        if (!vulnerabilities || typeof vulnerabilities !== 'object') return null;
+
+        const low = Number(vulnerabilities.low || 0);
+        const moderate = Number(vulnerabilities.moderate || 0);
+        const high = Number(vulnerabilities.high || 0);
+        const critical = Number(vulnerabilities.critical || 0);
+        return {
+            low,
+            moderate,
+            high,
+            critical,
+            total: low + moderate + high + critical
+        };
+    } catch {
+        return null;
+    }
+}
+
+function formatAuditSummary(summary: NpmAuditSummary | null): string {
+    if (!summary) return 'unknown';
+    const parts = [
+        summary.critical ? `${summary.critical} critical` : null,
+        summary.high ? `${summary.high} high` : null,
+        summary.moderate ? `${summary.moderate} moderate` : null,
+        summary.low ? `${summary.low} low` : null
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(', ') : '0 vulnerabilities';
+}
+
+async function runNpmAudit(projectRoot: string): Promise<{ code: number; stdout: string; stderr: string }> {
+    const { spawn } = await import('child_process');
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+    return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+        const child = spawn(npmCmd, ['audit'], {
+            cwd: projectRoot,
+            shell: true,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
+        child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+        child.on('close', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    });
+}
+
+async function runNpmAuditSummary(projectRoot: string): Promise<NpmAuditSummary | null> {
+    const { spawn } = await import('child_process');
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+    return await new Promise<NpmAuditSummary | null>((resolve) => {
+        const child = spawn(npmCmd, ['audit', '--json'], {
+            cwd: projectRoot,
+            shell: true,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        let stdout = '';
+        child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
+        child.on('close', () => resolve(summarizeAuditMetadata(stdout)));
+        child.on('error', () => resolve(null));
+    });
+}
+
+async function runNpmAuditFix(projectRoot: string, force = false): Promise<boolean> {
+    const { spawn } = await import('child_process');
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const args = ['audit', 'fix'];
+    if (force) {
+        args.push('--force');
+    }
+
+    return await new Promise<boolean>((resolve) => {
+        const child = spawn(npmCmd, args, {
+            cwd: projectRoot,
+            shell: true,
+            stdio: 'inherit'
+        });
+        child.on('close', (code) => resolve(code === 0));
+    });
 }
 
 export async function runReleasePipeline(): Promise<boolean> {
@@ -1851,7 +2262,7 @@ export async function doRunRelease() {
 
 export async function runDeployPrepCore(): Promise<boolean> {
     const chalk = (await import('chalk')).default;
-    const root = process.cwd();
+    const root = resolveWorkspaceRoot(process.cwd());
     const results: Array<{ label: string; ok: boolean }> = [];
 
     const runStep = async (label: string, fn: () => Promise<boolean>) => {
@@ -1896,6 +2307,60 @@ export async function runDeployPrepCore(): Promise<boolean> {
     } else {
         console.log(chalk.gray('\n(Dashboard package.json not found. Skipping dashboard checks.)'));
     }
+
+    const inquirer = (await import('inquirer')).default;
+    await runStep('Core: Security Audit', async () => {
+        console.log(chalk.cyan('\n🔎 Running npm audit...'));
+        const beforeSummary = await runNpmAuditSummary(root);
+        const auditResult = await runNpmAudit(root);
+        const combined = [auditResult.stdout, auditResult.stderr].filter(Boolean).join('\n').trim();
+        console.log(chalk.gray(`Audit summary: ${formatAuditSummary(beforeSummary)}`));
+        if (combined) {
+            console.log(combined);
+        } else {
+            console.log(chalk.gray('(No audit output returned.)'));
+        }
+
+        const { auditAction } = await inquirer.prompt([{
+            type: 'list',
+            name: 'auditAction',
+            message: 'What would you like to do with the vulnerabilities?',
+            choices: [
+                { name: 'Run npm audit fix', value: 'fix' },
+                { name: 'Run npm audit fix --force', value: 'force' },
+                { name: 'Continue without changing dependencies', value: 'continue' }
+            ],
+            default: 'continue'
+        }]);
+
+        if (auditAction === 'fix') {
+            const fixed = await runNpmAuditFix(root, false);
+            if (!fixed) {
+                console.log(chalk.red('npm audit fix failed.'));
+                return false;
+            }
+            const afterSummary = await runNpmAuditSummary(root);
+            console.log(chalk.green(`Audit after fix: ${formatAuditSummary(afterSummary)}`));
+            return true;
+        }
+
+        if (auditAction === 'force') {
+            const fixed = await runNpmAuditFix(root, true);
+            if (!fixed) {
+                console.log(chalk.red('npm audit fix --force failed.'));
+                return false;
+            }
+            const afterSummary = await runNpmAuditSummary(root);
+            console.log(chalk.green(`Audit after force fix: ${formatAuditSummary(afterSummary)}`));
+            if (beforeSummary && afterSummary && afterSummary.total > beforeSummary.total) {
+                console.log(chalk.yellow(`\n⚠️  The force fix increased the total vulnerability count from ${beforeSummary.total} to ${afterSummary.total}.`));
+                console.log(chalk.gray('   This can happen when npm reshapes the dependency tree. You may want to pin versions manually instead of forcing another pass.'));
+            }
+            return true;
+        }
+
+        return true;
+    });
 
     console.log(chalk.cyan('\nPrep Summary:'));
     results.forEach(r => {
@@ -2046,9 +2511,10 @@ registerScript('maintSetClaims', async () => {
     const path = await import('path');
     const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
+    const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
 
     console.log(chalk.yellow('\n👑 Opening Set User Claims TUI in a new window...'));
-    await ProcessManager.spawnDetachedWindow('Set User Claims', 'npx tsx set-claims.ts', path.join(process.cwd(), 'claims'));
+    await ProcessManager.spawnDetachedWindow('Set User Claims', 'node scripts\\set_claims.js', vishnuRoot);
     
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
     return 'maintenance-menu';
@@ -2263,14 +2729,30 @@ registerScript('branchRemove', async () => {
 async function requireMaintenanceAccess(): Promise<boolean> {
     const { AuthService } = await import('../core/auth');
     const { state } = await import('../core/state');
+    const { SessionTimerManager } = await import('../core/session-timers');
+    const { UserConfigManager } = await import('../config/user-config');
+    const { AuthTokenStore } = await import('../core/auth/token-store');
     const chalk = (await import('chalk')).default;
     const path = (await import('path')).default;
+    const { fileURLToPath } = await import('url');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+
+    if (SessionTimerManager.hasActiveOwnerSession() && state.user?.role === 'owner') {
+        return true;
+    }
+
+    state.user = undefined;
+    state.authBypass = false;
+    state.rawIdToken = undefined;
+    UserConfigManager.clearAuthState();
+    AuthTokenStore.clear();
 
     console.log(chalk.magenta('\n🔒 Verifying Administrative Access...'));
     
     // Force Auth against Vishnu Project
-    const vishnuRoot = process.env.VISHNU_ROOT || process.cwd();
-    const claimsPath = path.join(vishnuRoot, 'claims');
+    const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : path.resolve(__dirname, '..', '..');
+    const serviceAccountPath = path.join(vishnuRoot, '.secrets', 'admin-sdk.json');
 
     // Switch context to Vishnu Root for Maintenance
     process.chdir(vishnuRoot);
@@ -2280,12 +2762,13 @@ async function requireMaintenanceAccess(): Promise<boolean> {
         projectId: 'vishnu-b65bd',
         apiKey: 'AIzaSyCSntkOv0yMAAF2CduDvl638EsdMN6xU1U',
         authDomain: 'vishnu-b65bd.firebaseapp.com',
-        serviceAccount: path.join(claimsPath, 'admin-sdk.json')
+        serviceAccount: serviceAccountPath
     };
 
     const success = await AuthService.login(state, vishnuAuth);
+    const currentUserRole = (state.user as { role?: string } | undefined)?.role;
 
-    if (success && state.user?.isAdmin) {
+    if (success && currentUserRole === 'owner') {
         state.project.rootPath = vishnuRoot;
         state.setProjectType('custom');
         return true;
