@@ -10,8 +10,9 @@ import {
     type FrameworkEnvMode
 } from './env-template';
 import { SessionTimerManager } from '../session-timers';
-import { inspectCredentialFiles } from './firebase-credentials';
+import { inspectCredentialFiles, normalizeCredentialFiles } from './firebase-credentials';
 import { List } from '../../components/list';
+import { io } from '../io';
 
 const NEXT_PUBLIC_KEYS = [
     'NEXT_PUBLIC_FIREBASE_API_KEY',
@@ -261,6 +262,254 @@ function printDetailedMismatchView(projectPath: string, framework: FrameworkEnvM
     }
 }
 
+type MismatchReviewKind =
+    | 'env-sync'
+    | 'env-setup'
+    | 'credential-move'
+    | 'credential-missing'
+    | 'legacy-env-key'
+    | 'next-public-file'
+    | 'timer-issue';
+
+interface MismatchReviewItem {
+    id: string;
+    name: string;
+    kind: MismatchReviewKind;
+    target?: string;
+    detail?: string;
+}
+
+function buildMismatchReviewItems(projectPath: string, framework: FrameworkEnvMode, summary: ReturnType<typeof buildMismatchSummary>): MismatchReviewItem[] {
+    const items: MismatchReviewItem[] = [];
+
+    if (!summary.formatCheck.ok && summary.formatCheck.missing.length > 0) {
+        items.push({
+            id: 'env-sync',
+            name: `📝 Rebuild .env from credentials (${summary.formatCheck.missing.length})`,
+            kind: 'env-sync',
+            detail: summary.formatCheck.missing.join(', ')
+        });
+    }
+
+    for (const file of summary.credentialState.missingFiles) {
+        items.push({
+            id: `credential-missing:${file}`,
+            name: `📁 Missing credential file: ${file}`,
+            kind: 'credential-missing',
+            target: file,
+            detail: 'Open the setup flow and wait for the required files.'
+        });
+    }
+
+    for (const move of summary.credentialState.suggestedMoves) {
+        const [source, destination] = move.split(' -> ');
+        items.push({
+            id: `credential-move:${source ?? move}`,
+            name: `📦 Move credential: ${move}`,
+            kind: 'credential-move',
+            target: source ?? move,
+            detail: destination
+        });
+    }
+
+    for (const key of summary.legacyEnvKeys) {
+        items.push({
+            id: `legacy-env-key:${key}`,
+            name: `🧹 Remove legacy env key: ${key}`,
+            kind: 'legacy-env-key',
+            target: key,
+            detail: 'Clears legacy Firebase env keys from the project env files.'
+        });
+    }
+
+    for (const file of summary.nextPublicMatches) {
+        items.push({
+            id: `next-public-file:${file}`,
+            name: `🔁 Replace NEXT_PUBLIC references in: ${file}`,
+            kind: 'next-public-file',
+            target: file,
+            detail: 'Rewrites old NEXT_PUBLIC keys to the new Firebase env names.'
+        });
+    }
+
+    for (const issue of summary.timerIssues) {
+        items.push({
+            id: `timer-issue:${issue.key}:${String(issue.rawValue)}`,
+            name: `⏱️  ${issue.key}: ${issue.message}`,
+            kind: 'timer-issue',
+            target: issue.key,
+            detail: String(issue.rawValue)
+        });
+    }
+
+    return items;
+}
+
+function buildMismatchReviewChoices(projectPath: string, framework: FrameworkEnvMode, summary: ReturnType<typeof buildMismatchSummary>) {
+    const items = buildMismatchReviewItems(projectPath, framework, summary);
+    const choices: Array<{ name: string; value: string } | { type: 'separator'; line: string }> = [];
+
+    if (items.length > 0) {
+        choices.push({ type: 'separator', line: '--- Actionable mismatches ---' });
+        for (const item of items) {
+            choices.push({ name: item.name, value: item.id });
+        }
+    } else {
+        choices.push({ type: 'separator', line: '--- No actionable mismatches found ---' });
+    }
+
+    choices.push({ type: 'separator', line: '---' });
+    choices.push({ name: '🔄 Refresh review', value: '__refresh__' });
+    choices.push({ name: '⬅️  Back', value: '__back__' });
+
+    return { items, choices };
+}
+
+async function runWithNormalInput<T>(task: () => Promise<T>): Promise<T> {
+    io.destroy();
+    try {
+        return await task();
+    } finally {
+        io.start();
+    }
+}
+
+async function promptTimerFix(projectPath: string, item: MismatchReviewItem): Promise<boolean> {
+    if (!item.target) {
+        return false;
+    }
+
+    const issue = SessionTimerManager.getTimerValidationIssues().find((candidate) => candidate.key === item.target);
+    if (!issue) {
+        return false;
+    }
+
+    const timerChoices = item.target === 'forcedReauthAt'
+        ? [
+            { name: 'Reset to inactive (0)', value: 'reset' },
+            { name: '⬅️  Back', value: 'back' }
+        ]
+        : [
+            { name: '1 minute', value: '1' },
+            { name: '5 minutes', value: '5' },
+            { name: '15 minutes', value: '15' },
+            { name: '30 minutes', value: '30' },
+            { name: '60 minutes', value: '60' },
+            { name: '⬅️  Back', value: 'back' }
+        ];
+
+    const choice = await List(
+        `Fix timer mismatch\n${issue.key}: ${issue.message}\nCurrent value: ${String(issue.rawValue)}`,
+        timerChoices
+    );
+
+    if (choice === '__BACK__' || choice === 'back') {
+        return false;
+    }
+
+    if (item.target === 'forcedReauthAt') {
+        SessionTimerManager.updateLocalTimers({ forcedReauthAt: 0 });
+        return true;
+    }
+
+    const minutes = Number(choice);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        return false;
+    }
+
+    SessionTimerManager.updateLocalTimers({
+        [item.target]: minutes * 60 * 1000
+    } as Partial<ReturnType<typeof SessionTimerManager.getConfig>>);
+
+    return true;
+}
+
+async function runMismatchReviewPrompt(projectPath: string, framework: FrameworkEnvMode, summary: ReturnType<typeof buildMismatchSummary>): Promise<void> {
+    while (true) {
+        const { items, choices } = buildMismatchReviewChoices(projectPath, framework, summary);
+        const headerLines = [
+            'Detailed mismatch review',
+            `Project: ${projectPath}`,
+            `Framework: ${framework}`,
+            `Use arrows to move, Enter to fix the selected item, and q to return.`
+        ];
+
+        const selected = await List(headerLines.join('\n'), choices);
+        if (selected === '__BACK__') {
+            return;
+        }
+
+        if (selected === '__refresh__') {
+            summary = buildMismatchSummary(projectPath, framework);
+            continue;
+        }
+
+        const item = items.find((entry) => entry.id === selected);
+        if (!item) {
+            continue;
+        }
+
+        const fixResult = await (async () => {
+            switch (item.kind) {
+                case 'env-sync':
+                    return await runWithNormalInput(async () => {
+                        const { syncProjectCredentialsFromSecrets } = await import('./firebase-credentials');
+                        const syncResult = syncProjectCredentialsFromSecrets({ projectPath, framework });
+                        if (!syncResult.performed) {
+                            const { EnvSetupManager } = await import('../../managers/env-setup');
+                            await EnvSetupManager.verifyAndSetupEnv(true);
+                        }
+                        return true;
+                    });
+                case 'credential-missing':
+                    return await runWithNormalInput(async () => {
+                        const { EnvSetupManager } = await import('../../managers/env-setup');
+                        await EnvSetupManager.verifyAndSetupEnv(true);
+                        return true;
+                    });
+                case 'credential-move':
+                    return await runWithNormalInput(async () => {
+                        normalizeCredentialFiles(projectPath);
+                        const { syncProjectCredentialsFromSecrets } = await import('./firebase-credentials');
+                        syncProjectCredentialsFromSecrets({ projectPath, framework });
+                        return true;
+                    });
+                case 'legacy-env-key':
+                    return await runWithNormalInput(async () => {
+                        const envFiles = [
+                            path.join(projectPath, '.env'),
+                            path.join(projectPath, '.env.local'),
+                            path.join(projectPath, '.env.example')
+                        ];
+
+                        for (const envFile of envFiles) {
+                            purgeFirebaseKeysFromEnvFile(envFile);
+                        }
+
+                        return true;
+                    });
+                case 'next-public-file':
+                    return await runWithNormalInput(async () => {
+                        if (!item.target) return false;
+                        replaceNextPublicInFile(path.join(projectPath, item.target));
+                        return true;
+                    });
+                case 'timer-issue':
+                    return await promptTimerFix(projectPath, item);
+                default:
+                    return false;
+            }
+        })();
+
+        summary = buildMismatchSummary(projectPath, framework);
+        if (fixResult) {
+            console.log(chalk.green('\n✅ Mismatch item processed. Review refreshed.'));
+        } else {
+            console.log(chalk.yellow('\nℹ️  No change was applied. Review refreshed.'));
+        }
+    }
+}
+
 function purgeFirebaseKeysFromEnvFile(filePath: string): boolean {
     if (!fs.existsSync(filePath)) return false;
     const original = fs.readFileSync(filePath, 'utf-8');
@@ -431,7 +680,7 @@ export async function runEnvMigrationPrompt(projectPath: string): Promise<void> 
         }
 
         if (choice === 'visualize') {
-            printDetailedMismatchView(projectPath, framework, summary);
+            await runMismatchReviewPrompt(projectPath, framework, summary);
             continue;
         }
 
