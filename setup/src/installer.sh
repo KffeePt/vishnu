@@ -2,7 +2,12 @@
 set -euo pipefail
 
 # Vishnu System - macOS/Linux Installer
-# This script sets up SSH, clones the repo, and links the 'codeman' command.
+# This script sets up SSH, clones the repo, aligns it to the latest stable
+# release tag, and links the 'codeman' command.
+
+INSTALLER_VERSION="__INSTALLER_VERSION__"
+STABLE_BRANCH="stable"
+STABLE_DOWNLOAD_URL="https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.sh"
 
 # --- Colors ---
 RED='\033[0;31m'
@@ -33,6 +38,38 @@ print_header() {
 # --- INSTALL LOGIC ---
 print_header
 log_info "Starting Vishnu System Installation..."
+log_info "Installer version: ${INSTALLER_VERSION}"
+
+extract_json_value() {
+    local json="$1"
+    local key="$2"
+    printf '%s' "$json" | grep "\"${key}\"" | head -n 1 | sed -E 's/.*"'"${key}"'": ?"([^"]+)".*/\1/' || true
+}
+
+latest_stable_tag() {
+    git -C "$1" tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true
+}
+
+version_lt() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]
+}
+
+write_install_marker() {
+    local project_dir="$1"
+    local installed_version="$2"
+    local tag="$3"
+    mkdir -p "$HOME/.vishnu"
+    cat > "$HOME/.vishnu/install.json" <<EOF
+{
+  "channel": "stable",
+  "installerVersion": "${INSTALLER_VERSION}",
+  "installedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "installedVersion": "${installed_version}",
+  "rootPath": "${project_dir}",
+  "tag": "${tag}"
+}
+EOF
+}
 
 # 1. Check Node.js
 if ! command -v node &> /dev/null; then
@@ -86,36 +123,48 @@ mkdir -p "$GITHUB_DIR"
 
 if [ -d "$PROJECT_DIR" ]; then
     log_info "Evaluating repository updates..."
-    cd "$PROJECT_DIR"
-    
-    CURRENT_VERSION="unknown"
-    if [ -f "version.json" ]; then
-        CURRENT_VERSION=$(grep '"version"' version.json | head -n 1 | sed -E 's/.*"version": ?"([^"]+)".*/\1/')
-    fi
-    
-    log_info "Current version: $CURRENT_VERSION"
-    git fetch origin main >/dev/null 2>&1
-    
-    REMOTE_VERSION=$(git show origin/main:version.json 2>/dev/null | grep '"version"' | head -n 1 | sed -E 's/.*"version": ?"([^"]+)".*/\1/' || echo "unknown")
-    
-    if [ "$REMOTE_VERSION" != "unknown" ] && [ "$CURRENT_VERSION" != "$REMOTE_VERSION" ]; then
-        log_info "✨ Update available! ($CURRENT_VERSION -> $REMOTE_VERSION)"
-        read -p "Update now? [Y/n] " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            log_warn "Skipping update."
-        else
-            log_info "Updating repository..."
-            git pull origin main
-        fi
-    else
-        log_ok "Already up to date."
-    fi
 else
     log_info "Cloning repository..."
     cd "$GITHUB_DIR"
-    git clone git@github.com:KffeePt/vishnu.git
-    cd "$PROJECT_DIR"
+    git clone git@github.com:KffeePt/vishnu.git vishnu
+fi
+
+cd "$PROJECT_DIR"
+
+CURRENT_VERSION="unknown"
+if [ -f "version.json" ]; then
+    CURRENT_VERSION=$(extract_json_value "$(cat version.json)" "version")
+fi
+
+git fetch origin --tags --force >/dev/null 2>&1
+TARGET_TAG=$(latest_stable_tag "$PROJECT_DIR")
+if [ -z "$TARGET_TAG" ]; then
+    log_fail "No stable release tags were found on origin."
+fi
+
+TARGET_METADATA=$(git show "${TARGET_TAG}:version.json" 2>/dev/null || true)
+TARGET_VERSION=$(extract_json_value "$TARGET_METADATA" "version")
+MIN_INSTALLER_VERSION=$(extract_json_value "$TARGET_METADATA" "min_installer_version")
+
+if [ -z "$TARGET_VERSION" ]; then
+    log_fail "Could not read version metadata for ${TARGET_TAG}."
+fi
+
+if [ -n "$MIN_INSTALLER_VERSION" ] && version_lt "$INSTALLER_VERSION" "$MIN_INSTALLER_VERSION"; then
+    log_fail "Installer ${INSTALLER_VERSION} is too old for ${TARGET_TAG}. Download the latest stable installer from ${STABLE_DOWNLOAD_URL}"
+fi
+
+CURRENT_BRANCH=$(git branch --show-current || true)
+log_info "Current version: $CURRENT_VERSION"
+log_info "Target stable release: ${TARGET_TAG} (${TARGET_VERSION})"
+
+if [ "$CURRENT_VERSION" != "$TARGET_VERSION" ] || [ "$CURRENT_BRANCH" != "$STABLE_BRANCH" ]; then
+    log_info "Aligning repository to the managed stable release..."
+    git reset --hard >/dev/null 2>&1
+    git checkout -B "$STABLE_BRANCH" "$TARGET_TAG"
+    git reset --hard "$TARGET_TAG" >/dev/null 2>&1
+else
+    log_ok "Already aligned to the latest stable release."
 fi
 
 # 4. Install & Link
@@ -131,6 +180,9 @@ else
     sudo npm link
 fi
 
+write_install_marker "$PROJECT_DIR" "$TARGET_VERSION" "$TARGET_TAG"
+
 echo ""
 log_ok "=== VISHNU SYSTEM SETUP COMPLETE ==="
+echo "Stable channel: ${TARGET_TAG}"
 echo "Run 'codeman' to start."

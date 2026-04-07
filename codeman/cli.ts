@@ -7,13 +7,14 @@ import { removePart, removeComponent } from './commands/remove-part';
 import { refactorComponent } from './commands/refactor-component';
 
 import { migrateComponentCommand } from './commands/migrate-component';
+import { APP_VERSION } from './utils/app-version';
 
 const program = new Command();
 
 program
   .name('generate-component')
   .description('CLI tool for generating React component boilerplate with intelligent refactoring')
-  .version('1.0.0');
+  .version(APP_VERSION);
 
 program.addCommand(migrateComponentCommand);
 

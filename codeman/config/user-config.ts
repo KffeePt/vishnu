@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { SessionTimerManager } from '../core/session-timers';
+import { APP_VERSION } from '../utils/app-version';
 
 const CONFIG_DIR = path.join(os.homedir(), '.vishnu');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'codeman.json');
@@ -16,7 +17,7 @@ interface UserConfig {
 }
 
 const DEFAULT_CONFIG: UserConfig = {
-    version: '2.0',
+    version: APP_VERSION,
     lastAuthTimestamp: 0,
     cachedUser: null,
     authMode: 'normal',
@@ -37,8 +38,12 @@ export const UserConfigManager = {
 
         try {
             const content = fs.readFileSync(CONFIG_FILE, 'utf-8');
-            const config = JSON.parse(content);
-            return { ...DEFAULT_CONFIG, ...config };
+            const config = { ...DEFAULT_CONFIG, ...JSON.parse(content) };
+            if (config.version !== APP_VERSION) {
+                config.version = APP_VERSION;
+                fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+            }
+            return config;
         } catch (error) {
             console.error('Failed to read config file, using default:', error);
             // backup default

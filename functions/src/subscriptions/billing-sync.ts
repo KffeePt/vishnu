@@ -5,7 +5,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
  * Scheduled function to sync subscription statuses with payment gateways.
  * Runs every 6 hours.
  */
-export const checkBillingStatus = onSchedule({ schedule: "every 6 hours" }, async (event) => {
+export const checkBillingStatus = onSchedule({ schedule: "every 6 hours" }, async (_event) => {
   const db = admin.firestore();
   
   // Find subscriptions that are active or past due

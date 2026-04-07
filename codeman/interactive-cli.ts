@@ -25,6 +25,7 @@ import { UserManager, UserActionMenu } from './core/users-manager';
 import { FirebaseManagerMenu } from './core/firebase-manager';
 import { LinkProjectMenu } from './menus/firebase/link-project';
 import { ProcessRegistryManager } from './managers/process-registry-manager';
+import { APP_VERSION } from './utils/app-version';
 
 
 // New Schema System Imports
@@ -247,7 +248,7 @@ async function handleCLIArgs(): Promise<boolean> {
   program
     .name('codeman')
     .description('CodeMan CLI — Vishnu Preserver System')
-    .version('1.0.0')
+    .version(APP_VERSION)
     .exitOverride()
     .allowUnknownOption(true); // Allow unknown options to pass through if needed
 

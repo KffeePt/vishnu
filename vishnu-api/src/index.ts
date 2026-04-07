@@ -18,6 +18,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+function firstParam(value: string | string[]): string {
+    return Array.isArray(value) ? value[0] ?? '' : value;
+}
+
 // Extend Express Request
 declare global {
     namespace Express {
@@ -71,7 +75,7 @@ app.get('/health', (req, res) => {
 
 // Create a new job
 app.post('/api/v1/projects/:projectId/jobs', requireAuth, requireRole(['owner', 'projectManager', 'senior', 'dev']), async (req: Request, res: Response) => {
-    const { projectId } = req.params;
+    const projectId = firstParam(req.params.projectId);
     const { type, payload } = req.body;
 
     if (!type) {
@@ -97,7 +101,8 @@ app.post('/api/v1/projects/:projectId/jobs', requireAuth, requireRole(['owner', 
 
 // Get job status
 app.get('/api/v1/projects/:projectId/jobs/:jobId', requireAuth, async (req: Request, res: Response) => {
-    const { projectId, jobId } = req.params;
+    const projectId = firstParam(req.params.projectId);
+    const jobId = firstParam(req.params.jobId);
 
     try {
         const doc = await db.collection('projects').doc(projectId).collection('jobs').doc(jobId).get();
@@ -115,7 +120,8 @@ app.get('/api/v1/projects/:projectId/jobs/:jobId', requireAuth, async (req: Requ
 
 // Cancel a job
 app.post('/api/v1/projects/:projectId/jobs/:jobId/cancel', requireAuth, requireRole(['owner', 'projectManager', 'senior']), async (req: Request, res: Response) => {
-    const { projectId, jobId } = req.params;
+    const projectId = firstParam(req.params.projectId);
+    const jobId = firstParam(req.params.jobId);
 
     try {
         const docRef = db.collection('projects').doc(projectId).collection('jobs').doc(jobId);
@@ -143,5 +149,5 @@ app.post('/api/v1/projects/:projectId/jobs/:jobId/cancel', requireAuth, requireR
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(\`Vishnu API stub running on port \${PORT}\`);
+    console.log(`Vishnu API stub running on port ${PORT}`);
 });

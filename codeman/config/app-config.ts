@@ -1,6 +1,8 @@
+import { APP_VERSION } from '../utils/app-version';
+
 export const AppConfig = {
     name: 'CodeMan',
-    version: '2.2',
+    version: APP_VERSION,
     emojis: {
         default: '⚡',
         nextjs: '⚛️',

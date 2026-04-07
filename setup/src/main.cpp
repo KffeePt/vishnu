@@ -8,20 +8,29 @@
 #include <regex>
 #include <thread>
 #include <chrono>
+#include <ctime>
 #include <conio.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #include <cctype>
 #include <tlhelp32.h>
 #include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <array>
+#include <sstream>
 
 namespace fs = std::filesystem;
 using namespace std;
 
-const string INSTALLER_VERSION = "3.0.0";
+#ifndef INSTALLER_VERSION_STR
+#define INSTALLER_VERSION_STR "0.0.0"
+#endif
+
+const string INSTALLER_VERSION = INSTALLER_VERSION_STR;
+const string STABLE_BRANCH = "stable";
+const string STABLE_DOWNLOAD_URL_WINDOWS = "https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.exe";
 
 
 // --- Colors ---
@@ -50,7 +59,7 @@ void printHeader() {
   \/_/       \/_/   \/_____/   \/_/\/_/   \/_/ \/_/   \/_____/
 )" << endl;
     cout << RESET << endl;
-    log("               System Integrator v3.0 (C++)", CYAN);
+    log("               System Integrator v" + INSTALLER_VERSION + " (C++)", CYAN);
     cout << endl;
 }
 
@@ -163,6 +172,92 @@ string getCommandOutput(const string& cmd) {
     return result;
 }
 
+string trim(const string& value) {
+    const auto start = value.find_first_not_of(" \r\n\t");
+    if (start == string::npos) return "";
+    const auto end = value.find_last_not_of(" \r\n\t");
+    return value.substr(start, end - start + 1);
+}
+
+vector<int> parseVersion(const string& rawVersion) {
+    string version = rawVersion;
+    if (!version.empty() && (version[0] == 'v' || version[0] == 'V')) {
+        version = version.substr(1);
+    }
+
+    smatch match;
+    if (!regex_match(version, match, regex("^(\\d+)\\.(\\d+)\\.(\\d+)$"))) {
+        return {};
+    }
+
+    return { stoi(match[1]), stoi(match[2]), stoi(match[3]) };
+}
+
+int compareVersions(const string& left, const string& right) {
+    const auto leftParts = parseVersion(left);
+    const auto rightParts = parseVersion(right);
+    if (leftParts.size() != 3 || rightParts.size() != 3) {
+        return 0;
+    }
+
+    for (size_t index = 0; index < 3; ++index) {
+        if (leftParts[index] > rightParts[index]) return 1;
+        if (leftParts[index] < rightParts[index]) return -1;
+    }
+
+    return 0;
+}
+
+bool isStableTag(const string& tag) {
+    return regex_match(trim(tag), regex("^v(\\d+)\\.(\\d+)\\.(\\d+)$"));
+}
+
+string extractJsonValue(const string& json, const string& key) {
+    smatch match;
+    regex pattern("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"");
+    if (regex_search(json, match, pattern)) {
+        return match[1];
+    }
+    return "";
+}
+
+string escapeJson(const string& value) {
+    string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        switch (ch) {
+            case '\\': escaped += "\\\\"; break;
+            case '"': escaped += "\\\""; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default: escaped += ch; break;
+        }
+    }
+    return escaped;
+}
+
+string escapePowerShellLiteral(const string& value) {
+    string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        if (ch == '\'') escaped += "''";
+        else escaped += ch;
+    }
+    return escaped;
+}
+
+wstring toWide(const string& value) {
+    const int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, nullptr, 0);
+    if (sizeNeeded <= 0) return L"";
+    wstring result(sizeNeeded, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, result.data(), sizeNeeded);
+    if (!result.empty() && result.back() == L'\0') {
+        result.pop_back();
+    }
+    return result;
+}
+
 void checkNode() {
     log("[Check] Checking Environment...", BLUE);
     if (!runCommand("node -v >nul 2>&1")) {
@@ -240,6 +335,152 @@ string getGitHubPath() {
     return ghPath.string();
 }
 
+fs::path getInstallConfigPath() {
+    const char* userProfile = getenv("USERPROFILE");
+    string home = userProfile ? string(userProfile) : ".";
+    return fs::path(home) / ".vishnu" / "install.json";
+}
+
+void writeManagedInstallConfig(const fs::path& vishnuPath, const string& installedVersion, const string& tag) {
+    const fs::path configPath = getInstallConfigPath();
+    fs::create_directories(configPath.parent_path());
+    ofstream out(configPath, ios::trunc);
+    out << "{\n";
+    out << "  \"channel\": \"stable\",\n";
+    out << "  \"installerVersion\": \"" << escapeJson(INSTALLER_VERSION) << "\",\n";
+    out << "  \"installedAt\": \"" << escapeJson(to_string(time(nullptr))) << "\",\n";
+    out << "  \"installedVersion\": \"" << escapeJson(installedVersion) << "\",\n";
+    out << "  \"rootPath\": \"" << escapeJson(vishnuPath.string()) << "\",\n";
+    out << "  \"tag\": \"" << escapeJson(tag) << "\"\n";
+    out << "}\n";
+}
+
+void removeManagedInstallConfig() {
+    const fs::path configPath = getInstallConfigPath();
+    if (fs::exists(configPath)) {
+        fs::remove(configPath);
+    }
+}
+
+string getLocalVersion(const fs::path& repoPath) {
+    const fs::path versionPath = repoPath / "version.json";
+    if (!fs::exists(versionPath)) return "unknown";
+    const string content = getCommandOutput("type \"" + versionPath.string() + "\"");
+    const string version = extractJsonValue(content, "version");
+    return version.empty() ? "unknown" : version;
+}
+
+string getCurrentBranch(const fs::path& repoPath) {
+    return trim(getCommandOutput("git -C \"" + repoPath.string() + "\" branch --show-current 2>nul"));
+}
+
+string getLatestStableTag(const fs::path& repoPath) {
+    const string output = getCommandOutput("git -C \"" + repoPath.string() + "\" tag -l \"v*\"");
+    string latestTag;
+    vector<int> latestParts;
+
+    istringstream stream(output);
+    string line;
+    while (getline(stream, line)) {
+        const string tag = trim(line);
+        if (!isStableTag(tag)) continue;
+
+        const auto parts = parseVersion(tag);
+        if (latestTag.empty() || parts > latestParts) {
+            latestTag = tag;
+            latestParts = parts;
+        }
+    }
+
+    return latestTag;
+}
+
+string getVersionMetadataAtTag(const fs::path& repoPath, const string& tag) {
+    return getCommandOutput("git -C \"" + repoPath.string() + "\" show " + tag + ":version.json 2>nul");
+}
+
+bool ensureInstallerVersionCompatible(const fs::path& repoPath, const string& tag, string& targetVersion) {
+    const string metadata = getVersionMetadataAtTag(repoPath, tag);
+    if (metadata.empty()) {
+        log("[FAIL] Could not read version.json from release " + tag + ".", RED);
+        return false;
+    }
+
+    targetVersion = extractJsonValue(metadata, "version");
+    const string minInstallerVersion = extractJsonValue(metadata, "min_installer_version");
+    if (!minInstallerVersion.empty() && compareVersions(INSTALLER_VERSION, minInstallerVersion) < 0) {
+        log("[FAIL] This installer is too old for release " + tag + ".", RED);
+        log("       Installer version: " + INSTALLER_VERSION, RED);
+        log("       Required minimum:  " + minInstallerVersion, RED);
+        log("       Download the latest stable installer:", YELLOW);
+        log("       " + STABLE_DOWNLOAD_URL_WINDOWS, CYAN);
+        return false;
+    }
+
+    return true;
+}
+
+bool syncRepoToStableTag(const fs::path& repoPath, const string& tag) {
+    return runCommand("git -C \"" + repoPath.string() + "\" reset --hard") &&
+           runCommand("git -C \"" + repoPath.string() + "\" checkout -B " + STABLE_BRANCH + " " + tag) &&
+           runCommand("git -C \"" + repoPath.string() + "\" reset --hard " + tag);
+}
+
+fs::path getStartMenuShortcutPath() {
+    const char* appData = getenv("APPDATA");
+    if (!appData) return {};
+    return fs::path(appData) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "codeman.lnk";
+}
+
+bool createCodemanShortcut(const fs::path& repoPath) {
+    const fs::path shortcutPath = getStartMenuShortcutPath();
+    if (shortcutPath.empty()) return false;
+
+    const HRESULT initResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool shouldUninitialize = SUCCEEDED(initResult);
+    if (FAILED(initResult) && initResult != RPC_E_CHANGED_MODE) {
+        return false;
+    }
+
+    IShellLinkW* shellLink = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, reinterpret_cast<void**>(&shellLink));
+    if (SUCCEEDED(hr)) {
+        const string args = "-NoExit -ExecutionPolicy Bypass -Command \"Set-Location -LiteralPath '" +
+            escapePowerShellLiteral(repoPath.string()) + "'; codeman\"";
+        const fs::path iconPath = repoPath / "assets" / "icon.ico";
+
+        shellLink->SetPath(L"powershell.exe");
+        shellLink->SetArguments(toWide(args).c_str());
+        shellLink->SetWorkingDirectory(repoPath.wstring().c_str());
+        if (fs::exists(iconPath)) {
+            shellLink->SetIconLocation(iconPath.wstring().c_str(), 0);
+        }
+
+        IPersistFile* persistFile = nullptr;
+        hr = shellLink->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&persistFile));
+        if (SUCCEEDED(hr)) {
+            fs::create_directories(shortcutPath.parent_path());
+            hr = persistFile->Save(shortcutPath.wstring().c_str(), TRUE);
+            persistFile->Release();
+        }
+
+        shellLink->Release();
+    }
+
+    if (shouldUninitialize) {
+        CoUninitialize();
+    }
+
+    return SUCCEEDED(hr);
+}
+
+void removeCodemanShortcut() {
+    const fs::path shortcutPath = getStartMenuShortcutPath();
+    if (!shortcutPath.empty() && fs::exists(shortcutPath)) {
+        fs::remove(shortcutPath);
+    }
+}
+
 // --- Menu Helper ---
 int loopMenu(const string& title, const vector<string>& options) {
     int selected = 0;
@@ -315,6 +556,8 @@ int main() {
             // Unlink
             log("   - Unlinking global command...", CYAN);
             if(runCommand("npm unlink -g vishnu-system >nul 2>&1")) removedGlobal = true;
+            removeCodemanShortcut();
+            removeManagedInstallConfig();
 
             // Remove Directory
             string confirm = ask("Remove 'vishnu' source directory? (y/N)", "N");
@@ -362,58 +605,16 @@ int main() {
         fs::current_path(ghPath);
 
         bool sourceReady = false;
+        string targetTag;
+        string targetVersion;
 
         if (fs::exists("vishnu")) {
              log("[INFO] 'vishnu' directory found.", GREEN);
-             fs::current_path("vishnu");
-
-             string currentVersion = "unknown";
-             if (fs::exists("version.json")) {
-                 string content = getCommandOutput("type version.json");
-                 smatch match;
-                 if (regex_search(content, match, regex("\"version\"\\s*:\\s*\"([^\"]+)\""))) {
-                     currentVersion = match[1];
-                 }
-             }
-
-             log("Current version: " + currentVersion, CYAN);
-             
-             runCommand("git fetch origin main >nul 2>&1");
-             
-             string remoteVersion = "unknown";
-             string remoteMeta = getCommandOutput("git show origin/main:version.json 2>nul");
-             smatch rMatch;
-             if (regex_search(remoteMeta, rMatch, regex("\"version\"\\s*:\\s*\"([^\"]+)\""))) {
-                 remoteVersion = rMatch[1];
-             }
-
-             if (remoteVersion != "unknown" && remoteVersion != currentVersion) {
-                 cout << YELLOW << "\n✨ Update available! (" << currentVersion << " -> " << remoteVersion << ")" << RESET << endl;
-                 string ans = ask("Update now? [Y/n]", "Y");
-                 if (ans == "Y" || ans == "y") {
-                     log("Updating repository...", CYAN);
-                     runCommand("git pull origin main");
-                 } else {
-                     log("[WARN] Skipping update.", YELLOW);
-                 }
-             } else {
-                 string count = getCommandOutput("git rev-list --count HEAD..origin/main");
-                 count.erase(remove_if(count.begin(), count.end(), ::isspace), count.end());
-                 if(!count.empty() && count != "0") {
-                     log(">> Local system is behind by " + count + " commits.", YELLOW);
-                     string ans = ask("Pull latest commits? [Y/n]", "Y");
-                     if (ans == "Y" || ans == "y") runCommand("git pull origin main");
-                 } else {
-                     log("[OK] Already up to date.", GREEN);
-                 }
-             }
-             
-             fs::current_path(ghPath); // go back to GitHub dir
              sourceReady = true;
         } else {
              // Clone
              log("Cloning Vishnu System into " + fs::current_path().string() + "...", CYAN);
-             if (runCommand("git clone -b main git@github.com:KffeePt/vishnu.git vishnu")) {
+             if (runCommand("git clone git@github.com:KffeePt/vishnu.git vishnu")) {
                  sourceReady = true;
              }
         }
@@ -423,21 +624,63 @@ int main() {
              pauseExit();
         }
 
+        log("Fetching stable release tags...", CYAN);
+        if (!runCommand("git -C \"" + vishnuPath.string() + "\" fetch origin --tags --force")) {
+            log("[FAIL] Failed to fetch release tags from origin.", RED);
+            pauseExit();
+        }
+
+        const string currentVersion = getLocalVersion(vishnuPath);
+        const string currentBranch = getCurrentBranch(vishnuPath);
+        targetTag = getLatestStableTag(vishnuPath);
+        if (targetTag.empty()) {
+            log("[FAIL] No stable release tags were found on origin.", RED);
+            pauseExit();
+        }
+
+        if (!ensureInstallerVersionCompatible(vishnuPath, targetTag, targetVersion)) {
+            pauseExit();
+        }
+
+        log("Current version: " + currentVersion, CYAN);
+        log("Target stable release: " + targetTag + " (" + targetVersion + ")", CYAN);
+
+        if (currentVersion != targetVersion || currentBranch != STABLE_BRANCH) {
+            log("Aligning install to managed stable branch...", CYAN);
+            if (!syncRepoToStableTag(vishnuPath, targetTag)) {
+                log("[FAIL] Failed to sync repo to stable release " + targetTag + ".", RED);
+                pauseExit();
+            }
+        } else {
+            log("[OK] Already aligned to the latest stable release.", GREEN);
+        }
+
         // NPM Install & Link
         log("Checking dependencies...", CYAN);
         
         string installCmd = "cd \"" + vishnuPath.string() + "\" && npm install";
         if(!runCommand(installCmd)) {
-             log("[WARN] npm install failed. Continuing...", YELLOW);
+             log("[FAIL] npm install failed.", RED);
+             pauseExit();
         }
 
         log("\n[Link] Exposing global command...", BLUE);
         runCommand("npm unlink -g vishnu-system >nul 2>&1");
         
         string linkCmd = "cd \"" + vishnuPath.string() + "\" && npm link";
-        runCommand(linkCmd);
+        if(!runCommand(linkCmd)) {
+            log("[FAIL] npm link failed.", RED);
+            pauseExit();
+        }
         
         log("[OK] CodeMan linked globally.", GREEN);
+        const bool shortcutCreated = createCodemanShortcut(vishnuPath);
+        if (shortcutCreated) {
+            log("[OK] Start Menu shortcut created: codeman", GREEN);
+        } else {
+            log("[WARN] Could not create the Start Menu shortcut.", YELLOW);
+        }
+        writeManagedInstallConfig(vishnuPath, targetVersion, targetTag);
 
         // --- 3. Final Report & Pause ---
         system("cls");
@@ -446,8 +689,11 @@ int main() {
         cout << "1. SSH Setup:       " << GREEN << "OK" << RESET << endl;
         cout << "2. System Install:  " << GREEN << "OK" << RESET << endl;
         cout << "3. Global Link:     " << GREEN << "OK" << RESET << endl;
+        cout << "4. Release Channel: " << GREEN << targetTag << RESET << endl;
+        cout << "5. Start Menu Link: " << (shortcutCreated ? GREEN + string("OK") : YELLOW + string("WARN")) << RESET << endl;
         cout << endl;
         cout << "You can now run 'codeman' from any terminal." << endl;
+        cout << "You can also launch 'codeman' from the Windows Start Menu." << endl;
         cout << "The first time you run it in a new project, it will guide you through setup." << endl;
         cout << endl;
         

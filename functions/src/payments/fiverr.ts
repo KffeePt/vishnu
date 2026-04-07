@@ -20,12 +20,12 @@ export class FiverrGateway implements PaymentGateway {
     };
   }
 
-  async createSubscription(plan: SubscriptionPlan, customer: CustomerInfo, externalReference: string): Promise<SubscriptionResult> {
+  async createSubscription(_plan: SubscriptionPlan, _customer: CustomerInfo, _externalReference: string): Promise<SubscriptionResult> {
     // Fiverr does not support Direct API subscription creation
     throw new Error("Fiverr does not support programmatic subscriptions via API.");
   }
 
-  async cancelSubscription(subscriptionId: string): Promise<void> {
+  async cancelSubscription(_subscriptionId: string): Promise<void> {
     throw new Error("Fiverr does not support programmatic cancellation.");
   }
 
@@ -45,7 +45,7 @@ export class FiverrGateway implements PaymentGateway {
     return null;
   }
 
-  async getPaymentStatus(paymentId: string): Promise<any> {
+  async getPaymentStatus(_paymentId: string): Promise<any> {
     return { status: "unknown_in_fiverr" };
   }
 }

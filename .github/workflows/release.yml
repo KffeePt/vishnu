@@ -11,10 +11,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Compile C++ Installer
+    - name: Read Vishnu Version
+      id: version
+      shell: pwsh
       run: |
-        mkdir -p setup/output
-        g++ -std=c++17 -o setup/output/vishnu-installer.exe setup/src/main.cpp -static -ladvapi32 -lshlwapi -luser32
+        $version = (Get-Content version.json | ConvertFrom-Json).version
+        "value=$version" >> $env:GITHUB_OUTPUT
+
+    - name: Compile C++ Installer
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force setup/output | Out-Null
+        g++ -std=c++17 -DINSTALLER_VERSION_STR=\"${{ steps.version.outputs.value }}\" -o setup/output/vishnu-installer.exe setup/src/main.cpp -static -ladvapi32 -lshlwapi -luser32 -lole32 -luuid
         
     - name: Upload Windows Artifact
       uses: actions/upload-artifact@v4
@@ -27,10 +35,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Read Vishnu Version
+      id: version
+      run: |
+        version=$(python - <<'PY'
+import json
+print(json.load(open('version.json'))['version'])
+PY
+)
+        echo "value=$version" >> "$GITHUB_OUTPUT"
+
     - name: Package Bash Installer
       run: |
         mkdir -p setup/output
-        cp setup/src/installer.sh setup/output/vishnu-installer.sh
+        sed "s/__INSTALLER_VERSION__/${{ steps.version.outputs.value }}/g" setup/src/installer.sh > setup/output/vishnu-installer.sh
         
     - name: Upload Unix Artifact
       uses: actions/upload-artifact@v4
@@ -58,10 +76,24 @@ jobs:
         name: vishnu-installer.sh
         path: setup/output/
         
-    - name: Create GitHub Release
+    - name: Create Stable Release
+      if: ${{ !contains(github.ref_name, '-') }}
       uses: softprops/action-gh-release@v2
       with:
         generate_release_notes: true
+        make_latest: true
+        prerelease: false
+        files: |
+          setup/output/vishnu-installer.exe
+          setup/output/vishnu-installer.sh
+
+    - name: Create Prerelease
+      if: ${{ contains(github.ref_name, '-') }}
+      uses: softprops/action-gh-release@v2
+      with:
+        generate_release_notes: true
+        make_latest: false
+        prerelease: true
         files: |
           setup/output/vishnu-installer.exe
           setup/output/vishnu-installer.sh

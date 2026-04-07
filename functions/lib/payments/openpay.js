@@ -1,99 +1,99 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenPayGateway = void 0;
-const openpay_1 = __importDefault(require("openpay"));
+function normalizeChargeStatus(status) {
+    if (status === "completed")
+        return "completed";
+    if (status === "failed" || status === "cancelled")
+        return "failed";
+    return "pending";
+}
+function normalizeSubscriptionStatus(status) {
+    if (status === "active")
+        return "active";
+    if (status === "cancelled" || status === "failed")
+        return "failed";
+    if (status === "paused")
+        return "paused";
+    return "pending";
+}
 class OpenPayGateway {
     constructor(merchantId, privateKey, isProduction = false) {
-        // Basic OpenPay initialization
-        this.openpay = new openpay_1.default(merchantId, privateKey, isProduction);
+        this.baseUrl = `${isProduction ? "https://api.openpay.mx" : "https://sandbox-api.openpay.mx"}/v1/${merchantId}`;
+        this.authHeader = `Basic ${Buffer.from(`${privateKey}:`).toString("base64")}`;
+    }
+    async request(method, resourcePath, body) {
+        const response = await fetch(`${this.baseUrl}${resourcePath}`, {
+            method,
+            headers: {
+                "Authorization": this.authHeader,
+                "Content-Type": "application/json"
+            },
+            body: body ? JSON.stringify(body) : undefined
+        });
+        if (response.status === 204) {
+            return undefined;
+        }
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            console.error("OpenPay API Error:", payload);
+            throw new Error(`OpenPay request failed with status ${response.status}`);
+        }
+        return payload;
     }
     async createCharge(amount, currency, options) {
-        const chargeRequest = {
+        const charge = await this.request("POST", "/charges", {
             source_id: options.token,
-            method: 'card',
-            amount: amount,
-            currency: currency,
+            method: "card",
+            amount,
+            currency,
             description: options.description,
             order_id: options.externalReference,
             device_session_id: options.deviceId,
             customer: {
                 email: options.email
             }
-        };
-        return new Promise((resolve, reject) => {
-            this.openpay.charges.create(chargeRequest, (error, charge) => {
-                if (error) {
-                    console.error("OpenPay Charge Error:", error);
-                    reject(error);
-                }
-                else {
-                    resolve({
-                        id: charge.id,
-                        status: charge.status === 'completed' ? 'completed' : 'pending'
-                    });
-                }
-            });
         });
+        return {
+            id: charge.id,
+            status: normalizeChargeStatus(charge.status)
+        };
     }
     async createSubscription(plan, customer, externalReference) {
-        return new Promise((resolve, reject) => {
-            // Find or create customer (skipping full flow for brevity)
-            const customerRequest = {
-                name: customer.name || "Client",
-                last_name: "Vishnu",
-                email: customer.email,
-                requires_account: false
-            };
-            this.openpay.customers.create(customerRequest, (error, c) => {
-                if (error)
-                    return reject(error);
-                const subscriptionRequest = {
-                    plan_id: plan.id,
-                };
-                this.openpay.customers.subscriptions.create(c.id, subscriptionRequest, (err, sub) => {
-                    if (err)
-                        return reject(err);
-                    resolve({
-                        id: sub.id,
-                        status: sub.status === 'active' ? 'active' : 'pending',
-                        gatewayUrl: "openpay-integration-required" // Normally standard form
-                    });
-                });
-            });
+        const createdCustomer = await this.request("POST", "/customers", {
+            name: customer.name || "Client",
+            last_name: "Vishnu",
+            email: customer.email,
+            requires_account: false,
+            external_id: externalReference
         });
+        const subscription = await this.request("POST", `/customers/${createdCustomer.id}/subscriptions`, { plan_id: plan.id });
+        return {
+            id: subscription.id,
+            status: normalizeSubscriptionStatus(subscription.status),
+            gatewayUrl: "openpay-integration-required"
+        };
     }
     async cancelSubscription(subscriptionId) {
-        // Requires customer_id + subscription_id in OpenPay
         console.log("Canceling OpenPay subscription:", subscriptionId);
     }
     async handleWebhook(req) {
-        var _a;
+        var _a, _b, _c;
         const body = req.body;
         if (!body || !body.type)
             return null;
-        let type = "payment";
-        if (body.type.includes("subscription"))
-            type = "subscription";
+        const type = body.type.includes("subscription") ? "subscription" : "payment";
         return {
             gateway: "openpay",
             type,
-            externalId: body.transaction_id || ((_a = body.subscription) === null || _a === void 0 ? void 0 : _a.id),
+            externalId: body.transaction_id || ((_a = body.subscription) === null || _a === void 0 ? void 0 : _a.id) || body.id,
+            externalReference: body.order_id || ((_b = body.transaction) === null || _b === void 0 ? void 0 : _b.order_id) || ((_c = body.subscription) === null || _c === void 0 ? void 0 : _c.external_id),
             status: body.type,
             raw: body
         };
     }
     async getPaymentStatus(paymentId) {
-        return new Promise((resolve, reject) => {
-            this.openpay.charges.get(paymentId, (error, charge) => {
-                if (error)
-                    reject(error);
-                else
-                    resolve(charge);
-            });
-        });
+        return this.request("GET", `/charges/${paymentId}`);
     }
 }
 exports.OpenPayGateway = OpenPayGateway;

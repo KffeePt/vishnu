@@ -11,18 +11,22 @@
 - [Database & Auth Schema](docs/database/auth-schema.md)
 
 ## 🚀 Installation & Production Setup
-1.  Clone this repository to your machine.
-2.  Run the installer executable: `code-manager/setup/setup.exe` (or run `installer.sh` on Unix).
-3.  The installer will automatically check for updates against the global `version.json` and pull the latest production release before proceeding.
+1.  Download the latest stable installer:
+    `https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.exe`
+    or
+    `https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.sh`
+2.  Run the installer for your platform.
+3.  The installer clones `vishnu`, fetches release tags, and aligns the local install to the latest stable GitHub Release on the managed `stable` branch.
 4.  Follow the interactive prompts to bootstrap your environment, authorize your GitHub SSH keys, and link your Firebase backend.
+5.  On Windows, the installer also creates a Start Menu entry named `codeman` that opens the Codeman app in PowerShell.
 
 ## ⚡ Global Command
-Once installed, use `vishnu` anywhere:
+Once installed, use `codeman` anywhere:
 
 ```bash
-vishnu
+codeman
 ```
-- **Auto-Updates:** Runs `update.js` on launch to verify you are on the latest verified production build.
+- **Stable Release Updates:** The launcher checks the managed stable install and updates it to the latest stable GitHub Release before starting.
 - **Auto-Detects** your project context (Next.js, Flutter, etc.).
 - **Validates** your `.env`, Firebase backend resources, and authentication state.
 - **Grants** role-based access to specific generators and tools based on secure Firebase Auth tokens.

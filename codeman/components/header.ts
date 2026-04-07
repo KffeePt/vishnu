@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import { AppConfig } from '../config/app-config';
 import { getRainbowColor, Colors } from '../singletons/shiva/core/utils';
+import { APP_VERSION } from '../utils/app-version';
 
 async function getCodeManVersion(): Promise<string> {
     try {
@@ -11,10 +12,10 @@ async function getCodeManVersion(): Promise<string> {
         if (fs.existsSync(configPath)) {
             const content = fs.readFileSync(configPath, 'utf-8');
             const data = JSON.parse(content);
-            if (data.version) return data.version;
+            if (data.version && data.version === APP_VERSION) return data.version;
         }
     } catch (e) { /* ignore */ }
-    return AppConfig.version; // Fallback
+    return AppConfig.version;
 }
 
 export type ProjectMode = 'nextjs' | 'flutter' | 'cpp' | 'python' | 'custom' | 'unknown' | 'auth' | 'welcome' | 'shiva';

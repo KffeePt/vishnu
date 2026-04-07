@@ -111,9 +111,9 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-:: --- 4. Create Release ---
+:: --- 4. Create / Push Tag ---
 echo.
-echo [4/5] Creating GitHub Release %TAG%...
+echo [4/5] Publishing Tag %TAG%...
 :: Check if tag exists
 git rev-parse %TAG% >nul 2>nul
 if %errorlevel% equ 0 (
@@ -129,25 +129,35 @@ if %errorlevel% equ 0 (
     )
 )
 
-:: Create Release (No git tag push handled by us manually effectively, gh release create does it)
-call gh release create %TAG% --title "Vishnu System %TAG%" --generate-notes
+git tag %TAG%
 if %errorlevel% neq 0 (
-    echo [FAIL] Failed to create release.
+    echo [FAIL] Failed to create local tag.
     pause
     exit /b %errorlevel%
 )
 
-:: --- 5. Upload Artifacts ---
+git push origin %TAG%
+if %errorlevel% neq 0 (
+    echo [FAIL] Failed to push tag to origin.
+    pause
+    exit /b %errorlevel%
+)
+
+:: --- 5. Trigger Release Workflow ---
 echo.
-echo [5/5] Uploading Artifacts...
-call gh release upload %TAG% setup/output/vishnu-installer.exe --clobber
-if %errorlevel% neq 0 echo [WARN] Failed to upload .exe
-call gh release upload %TAG% setup/output/vishnu-installer.sh --clobber
-if %errorlevel% neq 0 echo [WARN] Failed to upload .sh
+echo [5/5] GitHub Actions will build and publish installers for %TAG%.
+if /i "%PRE_TYPE%"=="" (
+    echo        Stable tags become the latest release channel.
+) else (
+    echo        Pre-release tags stay out of the latest stable channel.
+)
 
 echo.
-echo [SUCCESS] Release %TAG% published!
-echo View at: https://github.com/KffeePt/vishnu/releases/tag/%TAG%
+echo [SUCCESS] Tag %TAG% pushed!
+echo Track the workflow at: https://github.com/KffeePt/vishnu/actions/workflows/release.yml
+echo Latest stable downloads:
+echo   https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.exe
+echo   https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.sh
 pause
 
 :: --- Helpers ---

@@ -2,8 +2,14 @@
 pushd "%~dp0"
 taskkill /F /IM vishnu-installer.exe >nul 2>&1
 if not exist "output" mkdir output
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "(Get-Content ..\version.json | ConvertFrom-Json).version"`) do set VISHNU_VERSION=%%V
+if "%VISHNU_VERSION%"=="" (
+    echo [FAIL] Could not read version.json
+    popd
+    exit /b 1
+)
 echo [INFO] Building Vishnu Installer (Windows)...
-g++ -std=c++17 -o output/vishnu-installer.exe src/main.cpp -static -ladvapi32 -lshlwapi -luser32
+g++ -std=c++17 -DINSTALLER_VERSION_STR=\"%VISHNU_VERSION%\" -o output/vishnu-installer.exe src/main.cpp -static -ladvapi32 -lshlwapi -luser32 -lole32 -luuid
 if %errorlevel% neq 0 (
     echo [FAIL] C++ Build failed!
     popd
@@ -11,9 +17,9 @@ if %errorlevel% neq 0 (
 )
 
 echo [INFO] Packaging Vishnu Installer (macOS/Linux)...
-copy src\installer.sh output\vishnu-installer.sh >nul
+powershell -NoProfile -Command "$content = Get-Content src\installer.sh -Raw; $content = $content -replace '__INSTALLER_VERSION__', '%VISHNU_VERSION%'; Set-Content output\vishnu-installer.sh $content -NoNewline"
 if %errorlevel% neq 0 (
-    echo [FAIL] Failed to copy installer script!
+    echo [FAIL] Failed to package installer script!
     popd
     exit /b %errorlevel%
 )

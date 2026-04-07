@@ -1,15 +1,24 @@
 #!/usr/bin/env node
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
+const updateScript = path.join(projectRoot, 'update.js');
 
 // Launch the TUI using npx tsx (safer for Windows/Global)
 const cliPath = path.join(projectRoot, 'codeman', 'interactive-cli.ts');
 
 const args = process.argv.slice(2);
+try {
+    execFileSync(process.execPath, [updateScript, '--launch'], {
+        cwd: projectRoot,
+        stdio: 'inherit'
+    });
+} catch (error) {
+    process.exit(error && typeof error.status === 'number' ? error.status : 1);
+}
 
 const child = spawn('npx', ['tsx', cliPath, ...args], {
     stdio: 'inherit',

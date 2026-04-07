@@ -1,55 +1,55 @@
 # Installer End-to-End Behavior
 
-The **Vishnu Installer** (`setup.exe` / `vishnu-installer.exe`) is a robust C++ application designed to bootstrap the entire development ecosystem from zero.
+The **Vishnu Installer** (`vishnu-installer.exe` / `vishnu-installer.sh`) bootstraps the system onto the managed stable release channel.
 
 ## 1. Initialization & Privilege Escalation
 
-- **Entry Point:** `main()` in `codeman/setup/src/main.cpp`.
-- **Singleton Check:** Uses `CreateToolhelp32Snapshot` to detect and murder any other running instances of `setup.exe` or `vishnu-installer.exe` to prevent file locking conflicts.
-- **Admin Rights:** Checks for Administrator privileges. If missing, it re-launches itself with `runas` verb to request elevation from Windows UAC.
+- **Entry Point:** `setup/src/main.cpp` on Windows and `setup/src/installer.sh` on Unix.
+- **Singleton Check (Windows):** Prevents multiple installer instances from fighting over the same files.
+- **Admin Rights (Windows):** Re-launches with `runas` when elevation is required.
 
 ## 2. Environment Pre-Flight
 
-1.  **Node.js Check:** Verifies `node -v`. Aborts if missing.
-2.  **SSH Configuration:**
-    - Checks if `ssh-agent` is running. Attempts to start it via PowerShell if not.
-    - Checks for `~/.ssh/id_rsa`.
-    - **Key Generation:** If no key exists, runs `ssh-keygen -t rsa -b 4096`.
-    - **Github Auth:** Copies the public key to clipboard and pauses, instructing the user to add it to GitHub Settings. This is a critical manual handshake.
-    - **Host Scanning:** Runs `ssh-keyscan github.com` to prevent "Are you sure?" prompts during git operations.
+1. **Node.js Check:** Verifies `node` is installed.
+2. **SSH Configuration:**
+   - Ensures `ssh-agent` is available.
+   - Generates `~/.ssh/id_rsa` if missing.
+   - Copies the public key to the clipboard and pauses for the GitHub key registration step.
+   - Adds the GitHub host key to `known_hosts`.
 
-## 3. System Installation / Update (Self-Updating)
+## 3. Stable Release Installation / Update
 
-- **Target:** `~/Documents/GitHub/vishnu`.
-- **Version Checking:** Before pulling, the installer fetches the remote `version.json` from the repository and compares it strictly against the local `version.json`. If a newer version is deployed, the user is prompted to auto-update.
-- **Clone vs Update:**
-    - If folder exists: Runs `git pull origin main` (after version prompt).
-    - If missing: Runs `git clone ...`.
-- **Linkage:**
-    - Runs `npm install` inside the directory.
-    - Runs `npm unlink -g vishnu-system` (cleanup).
-    - Runs `npm link` to expose the global `vishnu` binary.
+- **Target:** `~/Documents/GitHub/vishnu`
+- **Channel Source:** Stable GitHub Release tags only (`vX.Y.Z`)
+- **Ignored Tags:** `-alpha.N` and `-beta.N` prereleases never drive production installs or the stable updater.
+- **Flow:**
+  1. Clone the repo if it is missing.
+  2. Fetch tags from `origin`.
+  3. Resolve the newest stable tag.
+  4. Read that tag's `version.json`.
+  5. Block the install if `min_installer_version` is newer than the current bootstrapper.
+  6. Force the local repo onto the managed `stable` branch at that release tag.
+  7. Run `npm install` and `npm link`.
+- **Managed Install Marker:** Writes `~/.vishnu/install.json` so the runtime launcher knows which repo is the production-managed install.
 
-## 4. Project Context Selection (The TUI)
+## 4. Windows Start Menu Integration
 
-After installation, the installer enters an interactive TUI (Terminal User Interface):
+- Creates `%APPDATA%\Microsoft\Windows\Start Menu\Programs\codeman.lnk`
+- Launch target: `powershell.exe`
+- Launch behavior: open PowerShell in the installed Vishnu repo and run `codeman`
+- Icon source: `assets/icon.ico`
 
-- **Scanning:** Lists all folders in `~/Documents/GitHub`.
-- **Scaffolding:** Offers `+ Create New Project`.
-    - Supports **Next.js** (`npx create-next-app`).
-    - Supports **Flutter** (`flutter create`).
-- **Selection:** User selects a project to "Link".
+## 5. Runtime Update Behavior
 
-## 5. Auto-Configuration (`link-project`)
-
-Once a project is selected, the installer launches `vishnu link-project` in that directory. This subcommand:
-1.  Scans for Firebase Config (`firebase.json`, `.firebaserc`).
-2.  Updates `~/.vishnu/state.json` setting this as the active project.
-3.  Injects/Verifies `.env` variables (`OWNER_EMAIL`, `PROJECT_ID`).
+- `bin/vishnu.js` invokes `update.js` before launching Codeman.
+- `update.js` only mutates the managed install recorded in `~/.vishnu/install.json`.
+- The updater fetches release tags, resolves the newest stable tag, verifies installer compatibility, resets the managed repo to that tag on branch `stable`, and runs `npm install`.
 
 ## 6. Uninstall Flow
 
-If `vishnu` is already installed, the installer offers an **Uninstall** option:
-- Unlinks the global binary.
-- Optionally helps invoke `rm -rf` on the source directory.
-- Cleans up `~/.vishnu` config.
+If Vishnu is already installed, the installer offers an **Uninstall** option:
+- Unlinks the global package.
+- Removes the `codeman` Start Menu entry.
+- Deletes the managed install marker.
+- Optionally removes the source repo.
+- Optionally removes `~/.vishnu`.
