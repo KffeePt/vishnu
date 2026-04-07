@@ -18,9 +18,9 @@ export const SettingsMenuDef: MenuDefinition = {
                 action: { type: 'script', handler: 'manageGeminiKeys' }
             },
             {
-                label: '⏱️  Global Session Timers',
+                label: '⏱️  Global Session Timers (Read Only)',
                 value: 'session-timers',
-                action: { type: 'script', handler: 'manageSessionTimers' }
+                action: { type: 'script', handler: 'viewSessionTimers' }
             }
         ];
 

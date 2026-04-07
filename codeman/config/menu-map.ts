@@ -322,7 +322,7 @@ registerScript('showSessionInfo', async (args?: { returnTo?: string }) => {
     return args?.returnTo || 'config';
 });
 
-registerScript('manageSessionTimers', async () => {
+async function runSessionTimersScreen(options: { editable: boolean; returnTo: string }) {
     const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
     const { state } = await import('../core/state');
@@ -402,7 +402,7 @@ registerScript('manageSessionTimers', async () => {
         projectId: state.project.id || process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || undefined
     });
 
-    const canEditTimers = SessionTimerManager.isOwner();
+    const canEditTimers = options.editable && SessionTimerManager.isOwner();
 
     while (true) {
         console.clear();
@@ -454,7 +454,7 @@ registerScript('manageSessionTimers', async () => {
         }]).then((a) => a.action);
 
         if (action === 'back') {
-            return 'settings';
+            return options.returnTo;
         }
 
         if (action === 'refresh') {
@@ -540,6 +540,14 @@ registerScript('manageSessionTimers', async () => {
             await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
         }
     }
+}
+
+registerScript('viewSessionTimers', async () => {
+    await runSessionTimersScreen({ editable: false, returnTo: 'settings' });
+});
+
+registerScript('manageSessionTimers', async () => {
+    await runSessionTimersScreen({ editable: true, returnTo: 'maintenance-menu' });
 });
 
 // --- Specific Handlers Updates ---

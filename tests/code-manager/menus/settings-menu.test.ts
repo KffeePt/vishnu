@@ -17,4 +17,12 @@ describe('Settings menu launcher integration', () => {
         expect(launcherOptions.some((option) => option.value === 'open-syncpss')).toBe(true);
         expect(projectOptions.some((option) => option.value === 'open-syncpss')).toBe(false);
     });
+
+    it('shows session timers as read only in settings', async () => {
+        const getOptions = SettingsMenuDef.options as (state: any) => Promise<Array<{ value: string; action?: { handler?: string } }>>;
+        const options = await getOptions({ project: { rootPath: '' } });
+        const sessionTimers = options.find((option) => option.value === 'session-timers');
+
+        expect(sessionTimers?.action?.handler).toBe('viewSessionTimers');
+    });
 });

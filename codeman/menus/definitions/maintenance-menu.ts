@@ -67,6 +67,11 @@ export const MaintenanceMenuDef: MenuDefinition = {
             value: 'setup-firebase',
             action: { type: 'script', handler: 'maintSetupFirebase' }
         });
+        opts.push({
+            label: '⏱️  Edit Global Session Timers',
+            value: 'edit-session-timers',
+            action: { type: 'script', handler: 'manageSessionTimers' }
+        });
 
         opts.push({ label: '---', value: 'sep4', type: 'separator' });
         opts.push({ label: '⬅️  Back', value: 'back', action: { type: 'back' } });
