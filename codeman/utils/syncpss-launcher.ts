@@ -29,9 +29,10 @@ export async function launchSyncPssFromShortcut(): Promise<boolean> {
     }
 
     console.log(chalk.blue('\n🚀 Opening SyncPss from the Start Menu shortcut...'));
+    const shortcutPath = SYNC_PSS_SHORTCUT_PATH.replace(/'/g, "''");
     await ProcessManager.spawnDetachedWindow(
         'Open SyncPss',
-        `powershell.exe -NoProfile -Command "Start-Process -LiteralPath '${SYNC_PSS_SHORTCUT_PATH}'"`,
+        `powershell.exe -NoProfile -Command "Start-Process -FilePath '${shortcutPath}'"`,
         process.cwd()
     );
     return true;
