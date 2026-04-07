@@ -26,9 +26,9 @@ export const SettingsMenuDef: MenuDefinition = {
 
         if (!state.project.rootPath) {
             options.splice(1, 0, {
-                label: '🗃️  Sync .password-store (WSL syncpss)',
-                value: 'syncpss-wsl',
-                action: { type: 'script', handler: 'launchSyncPssWsl' }
+                label: 'Open SyncPss',
+                value: 'open-syncpss',
+                action: { type: 'script', handler: 'openSyncPss' }
             });
         }
 

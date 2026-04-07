@@ -103,9 +103,9 @@ registerScript('restartCLI', async () => {
     state.restartTargetNode = 'ROOT'; // Clean restart to Launcher
 });
 
-registerScript('launchSyncPssWsl', async () => {
-    const { launchSyncPssInWsl } = await import('../utils/syncpss-launcher');
-    const ok = await launchSyncPssInWsl();
+registerScript('openSyncPss', async () => {
+    const { launchSyncPssFromShortcut } = await import('../utils/syncpss-launcher');
+    const ok = await launchSyncPssFromShortcut();
     if (!ok) {
         const inquirer = (await import('inquirer')).default;
         await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to continue...' }]);
