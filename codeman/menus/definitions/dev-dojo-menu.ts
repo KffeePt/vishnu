@@ -28,6 +28,9 @@ export const getDevDojoOptions = async (state: GlobalState): Promise<MenuOption[
         { label: '🧪 Open Emulator UI', value: 'open-emulator-ui', action: { type: 'script', handler: 'openEmulatorUI' } }
     );
     options.push(
+        { label: '🔐 Manage Secrets', value: 'manage-secrets', action: { type: 'script', handler: 'manage-secrets' } }
+    );
+    options.push(
         { label: '📚 Doc Actions', value: 'doc-actions', action: { type: 'navigate', target: 'doc-actions-menu' } }
     );
 

@@ -44,6 +44,7 @@ describe('firebase credential helpers', () => {
         expect(envValues.GEMINI_API_KEY).toBe('gemini-test-key');
         expect(envValues.GOOGLE_WEB_CLIENT_ID).toBe('test-web-client-id.apps.googleusercontent.com');
         expect(envValues.GOOGLE_CLIENT_SECRET).toBe('test-oauth-secret');
+        expect(envValues.FIREBASE_WEB_SDK_FILE).toBe('firebase-sdk.json');
     });
 
     it('parses oauth json supplied by Google directly', () => {
@@ -107,8 +108,10 @@ describe('firebase credential helpers', () => {
 
             expect(result.adminSdkPath).toBe(path.join(projectPath, '.secrets', 'admin-sdk.json'));
             expect(result.clientSdkPath).toBe(path.join(projectPath, '.secrets', 'firebase-sdk.js'));
+            expect(result.clientSdkJsonPath).toBe(path.join(projectPath, '.secrets', 'firebase-sdk.json'));
             expect(result.oauthClientPath).toBe(path.join(projectPath, '.secrets', 'client-secret-oauth.json'));
-            expect(result.movedFiles.length).toBe(3);
+            expect(fs.existsSync(path.join(projectPath, '.secrets', 'firebase-sdk.json'))).toBe(true);
+            expect(result.movedFiles.length).toBe(4);
         } finally {
             fs.rmSync(projectPath, { recursive: true, force: true });
         }
@@ -130,11 +133,12 @@ describe('firebase credential helpers', () => {
             expect(result.performed).toBe(true);
             expect(envContent).toContain('GOOGLE_APPLICATION_CREDENTIALS=.secrets/admin-sdk.json');
             expect(envContent).toContain('GOOGLE_OAUTH_CLIENT_FILE=.secrets/client-secret-oauth.json');
-            expect(envContent).toContain('FIREBASE_WEB_SDK_FILE=.secrets/firebase-sdk.js');
+            expect(envContent).toContain('FIREBASE_WEB_SDK_FILE=.secrets/firebase-sdk.json');
             expect(envContent).toContain('GOOGLE_WEB_CLIENT_ID=test-web-client-id.apps.googleusercontent.com');
             expect(envContent).toContain('APP_CHECK_ANDROID_PROVIDER=debug');
             expect(envContent).toContain('CUSTOM_FLAG=keep-me');
             expect(fs.existsSync(path.join(projectPath, '.env.example'))).toBe(true);
+            expect(fs.existsSync(path.join(projectPath, '.secrets', 'firebase-sdk.json'))).toBe(true);
         } finally {
             fs.rmSync(projectPath, { recursive: true, force: true });
         }

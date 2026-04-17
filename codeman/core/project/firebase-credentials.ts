@@ -47,6 +47,7 @@ export interface FlutterNativeFirebaseGuardResult {
 export interface NormalizedCredentialFiles {
     adminSdkPath: string | null;
     clientSdkPath: string | null;
+    clientSdkJsonPath: string | null;
     oauthClientPath: string | null;
     movedFiles: string[];
     warnings: string[];
@@ -69,6 +70,7 @@ export interface ProjectCredentialSyncResult {
 export interface CredentialInspectionResult {
     adminSdkPath: string | null;
     clientSdkPath: string | null;
+    clientSdkJsonPath: string | null;
     oauthClientPath: string | null;
     missingFiles: string[];
     suggestedMoves: string[];
@@ -121,12 +123,29 @@ function ensureSecretsSupportFiles(projectPath: string): void {
                 'Place local-only Firebase and OAuth files in this folder.',
                 '',
                 '- admin-sdk.json',
-                '- firebase-sdk.js',
-                '- firebase-sdk.json',
+                '- firebase-sdk.js (literal Firebase web snippet source)',
+                '- firebase-sdk.json (generated readable form of firebase-sdk.js)',
                 '- client-secret-oauth.json'
             ].join('\n') + '\n'
         );
     }
+}
+
+function writeGeneratedFirebaseSdkJson(targetPath: string, sourcePath: string, config: FirebaseWebSdkConfig): void {
+    const payload = {
+        generatedFrom: path.basename(sourcePath),
+        firebaseConfig: {
+            apiKey: config.apiKey,
+            authDomain: config.authDomain,
+            projectId: config.projectId,
+            storageBucket: config.storageBucket,
+            messagingSenderId: config.messagingSenderId,
+            appId: config.appId,
+            measurementId: config.measurementId
+        }
+    };
+
+    fs.writeFileSync(targetPath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
 function resolveRelativePath(projectPath: string, filePath: string | null, fallback: string): string {
@@ -297,19 +316,46 @@ export function normalizeCredentialFiles(projectPath: string): NormalizedCredent
     const oauthSource = pickExistingPath(discoverOAuthCandidates(projectPath, secretsDir));
 
     const adminSdkPath = moveIntoSecrets(projectPath, adminSource, CANONICAL_ADMIN_SDK, movedFiles, warnings);
-    const clientSdkPath = firebaseSource?.endsWith('.json')
+    const normalizedClientSourcePath = firebaseSource?.endsWith('.json')
         ? moveIntoSecrets(projectPath, firebaseSource, CANONICAL_FIREBASE_SDK_JSON, movedFiles, warnings)
         : moveIntoSecrets(projectPath, firebaseSource, CANONICAL_FIREBASE_SDK_JS, movedFiles, warnings);
     const oauthClientPath = moveIntoSecrets(projectPath, oauthSource, CANONICAL_OAUTH_JSON, movedFiles, warnings);
+    const clientSdkPath = pickExistingPath([
+        path.join(secretsDir, CANONICAL_FIREBASE_SDK_JS),
+        ...(normalizedClientSourcePath ? [normalizedClientSourcePath] : [])
+    ]);
+    const clientSdkJsonPath = pickExistingPath([
+        path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON)
+    ]);
+
+    if (clientSdkPath) {
+        const generatedJsonPath = path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON);
+        const parsedClient = readFirebaseWebSdkFile(clientSdkPath);
+        const shouldWriteJson =
+            !fs.existsSync(generatedJsonPath) ||
+            fs.readFileSync(generatedJsonPath, 'utf-8').trim().length === 0;
+
+        if (shouldWriteJson || path.resolve(clientSdkPath).toLowerCase().endsWith('.js')) {
+            writeGeneratedFirebaseSdkJson(generatedJsonPath, clientSdkPath, parsedClient);
+            if (!clientSdkJsonPath) {
+                movedFiles.push(`${path.join(SECRETS_DIRNAME, CANONICAL_FIREBASE_SDK_JS)} -> ${path.join(SECRETS_DIRNAME, CANONICAL_FIREBASE_SDK_JSON)} (generated readable JSON)`);
+            }
+        }
+    }
+
+    const resolvedClientSdkJsonPath = pickExistingPath([
+        path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON)
+    ]);
 
     const missingFiles: string[] = [];
     if (!adminSdkPath) missingFiles.push(path.join(SECRETS_DIRNAME, CANONICAL_ADMIN_SDK).replace(/\\/g, '/'));
-    if (!clientSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS} or ${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JSON}`);
+    if (!clientSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS}`);
     if (!oauthClientPath) missingFiles.push(path.join(SECRETS_DIRNAME, CANONICAL_OAUTH_JSON).replace(/\\/g, '/'));
 
     return {
         adminSdkPath,
         clientSdkPath,
+        clientSdkJsonPath: resolvedClientSdkJsonPath,
         oauthClientPath,
         movedFiles,
         warnings,
@@ -339,10 +385,14 @@ export function inspectCredentialFiles(projectPath: string): CredentialInspectio
                 path.join(projectPath, 'client_secret.json')
             ]
     );
+    const clientSdkJsonPath = pickExistingPath([
+        path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON),
+        path.join(projectPath, CANONICAL_FIREBASE_SDK_JSON)
+    ]);
 
     const missingFiles: string[] = [];
     if (!adminSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_ADMIN_SDK}`);
-    if (!clientSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS} or ${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JSON}`);
+    if (!clientSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS}`);
     if (!oauthClientPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_OAUTH_JSON}`);
 
     const suggestedMoves: string[] = [];
@@ -363,6 +413,7 @@ export function inspectCredentialFiles(projectPath: string): CredentialInspectio
     return {
         adminSdkPath,
         clientSdkPath,
+        clientSdkJsonPath,
         oauthClientPath,
         missingFiles,
         suggestedMoves
@@ -400,8 +451,10 @@ export function buildEnvValuesFromCredentialFiles(options: {
         ),
         FIREBASE_WEB_SDK_FILE: resolveRelativePath(
             options.projectPath,
-            options.clientSdkPath,
-            `${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS}`
+            options.clientSdkPath.endsWith('.js')
+                ? path.join(path.dirname(options.clientSdkPath), CANONICAL_FIREBASE_SDK_JSON)
+                : options.clientSdkPath,
+            `${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JSON}`
         ),
         GOOGLE_WEB_CLIENT_ID: oauth?.clientId || base.GOOGLE_WEB_CLIENT_ID || '',
         GOOGLE_CLIENT_SECRET: oauth?.clientSecret || base.GOOGLE_CLIENT_SECRET || '',

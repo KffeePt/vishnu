@@ -893,6 +893,14 @@ registerScript('dev-dojo-mode', async () => {
     return 'dev-dojo';
 });
 
+registerScript('manage-secrets', async () => {
+    const { runSecretsManager } = await import('../core/project/secrets-manager');
+    const projectPath = state.project.rootPath || process.cwd();
+
+    await runSecretsManager(projectPath);
+    return 'dev-dojo';
+});
+
 registerScript('dev-dojo-close', async () => {
     const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
@@ -2737,7 +2745,6 @@ registerScript('branchRemove', async () => {
 async function requireMaintenanceAccess(): Promise<boolean> {
     const { AuthService } = await import('../core/auth');
     const { state } = await import('../core/state');
-    const { SessionTimerManager } = await import('../core/session-timers');
     const { UserConfigManager } = await import('../config/user-config');
     const { AuthTokenStore } = await import('../core/auth/token-store');
     const chalk = (await import('chalk')).default;
@@ -2746,14 +2753,12 @@ async function requireMaintenanceAccess(): Promise<boolean> {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
 
-    if (SessionTimerManager.hasActiveOwnerSession() && state.user?.role === 'owner') {
-        return true;
-    }
-
+    // Maintenance should never inherit a prior session implicitly.
     state.user = undefined;
     state.authBypass = false;
     state.rawIdToken = undefined;
     UserConfigManager.clearAuthState();
+    UserConfigManager.clearAuthBypass();
     AuthTokenStore.clear();
 
     console.log(chalk.magenta('\n🔒 Verifying Administrative Access...'));
