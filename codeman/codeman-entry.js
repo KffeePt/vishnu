@@ -2,11 +2,9 @@
 const path = require('path');
 const { spawn } = require('child_process');
 
-// Determine paths
-// We assume this file is in vishnu/code-manager/codeman-entry.js
-// root is ../../
-const projectRoot = path.resolve(__dirname, '../../');
-const cliScript = path.join(__dirname, 'interactive-cli.ts');
+// Determine paths from the legacy launcher to the module-backed CLI entry
+const projectRoot = path.resolve(__dirname, '..');
+const cliScript = path.join(projectRoot, 'modules', 'codeman', 'interactive-cli.ts');
 
 // Use the project's local tsx to ensure version consistency
 // On Windows, npm puts binaries in node_modules/.bin/tsx.cmd

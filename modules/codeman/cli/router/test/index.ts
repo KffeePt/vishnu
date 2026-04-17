@@ -1,0 +1,1 @@
+export { runTestCommand } from './test';

@@ -1,0 +1,21 @@
+{
+  "id": "katana",
+  "name": "Katana System Module",
+  "version": "1.0.0",
+  "description": "Base module for Katana scripting",
+  "isSystemPlugin": true,
+  "contributes": {
+    "devdojo": [
+      {
+        "category": "scripts",
+        "label": "➕ Create Katana Script",
+        "action": "createKatanaScript"
+      },
+      {
+        "category": "scripts",
+        "label": "🏃‍♂️ Run Katana Script",
+        "screen": "katana-scripts-menu"
+      }
+    ]
+  }
+}

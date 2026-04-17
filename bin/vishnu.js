@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
 
 // Launch the TUI using npx tsx (safer for Windows/Global)
-const cliPath = path.join(projectRoot, 'codeman', 'interactive-cli.ts');
+const cliPath = path.join(projectRoot, 'modules', 'codeman', 'interactive-cli.ts');
 
 const args = process.argv.slice(2);
 

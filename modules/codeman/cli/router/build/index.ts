@@ -1,0 +1,1 @@
+export { runBuildCommand } from './build';

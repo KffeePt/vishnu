@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["codeman/**/*.ts", "tests/**/*.ts"],
+  "include": ["codeman/**/*.ts", "tests/**/*.ts", "packages/**/*.ts", "modules/**/*.ts"],
   "exclude": ["node_modules", "dist", "setup/output"]
 }

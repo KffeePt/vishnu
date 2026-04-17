@@ -45,6 +45,7 @@ export { DevDojoMenuDef } from '../menus/definitions/dev-dojo-menu';
 export { BuildMenuDef } from '../menus/definitions/build-menu';
 export { DevOpsMenuDef } from '../menus/definitions/dev-ops-menu';
 export { SettingsMenuDef } from '../menus/definitions/settings-menu';
+export { ToolsMenuDef } from '../menus/definitions/tools-menu';
 export { UpdateMenuDef } from '../menus/definitions/update-menu';
 export { MaintenanceMenuDef } from '../menus/definitions/maintenance-menu';
 export { BranchingMenuDef } from '../menus/definitions/branching-menu';
@@ -58,6 +59,7 @@ registerCreateHandlers();
 
 // Register Settings Menu
 import { SettingsMenuDef } from '../menus/definitions/settings-menu';
+import { ToolsMenuDef } from '../menus/definitions/tools-menu';
 import { UpdateMenuDef } from '../menus/definitions/update-menu';
 import { createSchemaMenu } from '../core/schema-factory';
 import { registry } from '../core/registry';
@@ -65,6 +67,7 @@ import { JobsMenuDef } from '../menus/definitions/jobs-menu';
 import { DocActionsMenuDef } from '../menus/definitions/doc-actions-menu';
 
 registry.register(createSchemaMenu(SettingsMenuDef));
+registry.register(createSchemaMenu(ToolsMenuDef));
 registry.register(createSchemaMenu(UpdateMenuDef));
 registry.register(createSchemaMenu(NextJsTestsMenuDef));
 registry.register(createSchemaMenu(AdminGenMenuDef));
@@ -1878,90 +1881,41 @@ registerScript('listApiJobs', async () => {
 
 // --- Maintenance Deploy Logic Handlers ---
 registerScript('maintDeployAll', async () => {
-    const { ReleaseManager } = await import('../managers/release-manager');
-    const inquirer = (await import('inquirer')).default;
-    const chalk = (await import('chalk')).default;
-    console.log(chalk.magenta.bold('\n🌟 Initiating Full Project Deployment (TUI + Firebase)\n'));
-    
-    // Next, launch the interactive TUI Release process
-    // which builds CodeMan Windows/Mac/Linux and uploads GH Release
-    console.log(chalk.cyan('Step 1: TUI Release Pipeline'));
-    const releaseOk = await runReleasePipeline();
-    if (!releaseOk) {
-        console.log(chalk.red('\n❌ Release pipeline failed or was aborted. Skipping Firebase deploy.'));
-        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-        return 'maint-deploy-menu';
-    }
-    
-    console.log(chalk.cyan('\nStep 2: Firebase Deployment (Functions + Rules)'));
-    await ReleaseManager.deployAllFirebase(process.cwd());
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Deployment Complete. Press Enter...' }]);
-    return 'maint-deploy-menu';
+    const handler = registry.getScript('tools:deployAll');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run full deployment.'));
 });
 
-registerScript('maintDeployRelease', doRunRelease);
-
+registerScript('maintDeployRelease', async () => {
+    const handler = registry.getScript('tools:deployRelease');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run TUI release.'));
+});
 
 registerScript('maintDeployRules', async () => {
-    const { ReleaseManager } = await import('../managers/release-manager');
-    const inquirer = (await import('inquirer')).default;
-    await ReleaseManager.deployRules(process.cwd());
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-    return 'maint-deploy-menu';
+    const handler = registry.getScript('tools:deployRules');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot deploy rules.'));
 });
 
 registerScript('maintDeployDash', async () => {
-    const { ReleaseManager } = await import('../managers/release-manager');
-    const inquirer = (await import('inquirer')).default;
-    await ReleaseManager.deployFunctionsAPI(process.cwd());
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-    return 'maint-deploy-menu';
+    const handler = registry.getScript('tools:deployFunctions');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot deploy functions.'));
 });
 
 // (Deprecated/Removed Run CI and Run Deploy stubs from main maintenance menu)
 
 registerScript('maintSetupFirebase', async () => {
-    const chalk = (await import('chalk')).default;
-    console.log(chalk.cyan('Starting Interactive Firebase Setup...'));
-    const envManagerImport = await import('../managers/env-setup');
-    const EnvSetupManager = envManagerImport.EnvSetupManager as any;
-    await EnvSetupManager.interactiveSetup();
-    return 'maintenance-menu';
+    const handler = registry.getScript('tools:setupFirebase');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run setupFirebase.'));
 });
 
 registerScript('maintRunEmulator', async () => {
-    const chalk = (await import('chalk')).default;
-    const { spawn } = await import('child_process');
-    const inquirer = (await import('inquirer')).default;
-    const path = (await import('path')).default;
-    const fs = (await import('fs')).default;
-
-    const root = process.cwd();
-    const firebaseJson = path.join(root, 'firebase.json');
-
-    if (!fs.existsSync(firebaseJson)) {
-        console.log(chalk.red('\n❌ No firebase.json found in project root.'));
-        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-        return 'maintenance-menu';
-    }
-
-    console.log(chalk.cyan('\n🗄️  Starting Firebase Emulator Suite...'));
-    console.log(chalk.gray('  Auth: http://localhost:9099'));
-    console.log(chalk.gray('  Firestore: http://localhost:8080'));
-    console.log(chalk.gray('  Functions: http://localhost:5001'));
-    console.log(chalk.gray('  Emulator UI: http://localhost:4000'));
-    console.log(chalk.yellow('\n  Press Ctrl+C to stop.\n'));
-
-    await new Promise<void>((resolve) => {
-        const child = spawn('firebase', ['emulators:start'], {
-            stdio: 'inherit', shell: true, cwd: root
-        });
-        child.on('close', () => resolve());
-    });
-
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-    return 'maintenance-menu';
+    const handler = registry.getScript('tools:runEmulator');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run emulator.'));
 });
 
 registerScript('maintRunE2E', async () => {
@@ -1987,29 +1941,15 @@ registerScript('maintRunE2E', async () => {
 
 // --- New Maintenance Options ---
 registerScript('maintSetClaims', async () => {
-    const { ProcessManager } = await import('../core/process-manager');
-    const path = await import('path');
-    const chalk = (await import('chalk')).default;
-    const inquirer = (await import('inquirer')).default;
-
-    console.log(chalk.yellow('\n👑 Opening Set User Claims TUI in a new window...'));
-    await ProcessManager.spawnDetachedWindow('Set User Claims', 'npx tsx set-claims.ts', path.join(process.cwd(), 'claims'));
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
-    return 'maintenance-menu';
+    const handler = registry.getScript('tools:setClaims');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot set claims.'));
 });
 
 registerScript('maintDashboardDev', async () => {
-    const { ProcessManager } = await import('../core/process-manager');
-    const path = await import('path');
-    const chalk = (await import('chalk')).default;
-    const inquirer = (await import('inquirer')).default;
-
-    console.log(chalk.yellow('\n🖥️  Starting Next.js Dashboard Dev Server in a new window...'));
-    await ProcessManager.spawnDetachedWindow('Dashboard Dev Server', 'npm run dev', path.join(process.cwd(), 'dashboard'));
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
-    return 'maintenance-menu';
+    const handler = registry.getScript('tools:startDashboardDev');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot start dashboard dev.'));
 });
 
 registerScript('maintAddSecret', async () => {
@@ -2029,51 +1969,15 @@ registerScript('maintAddSecret', async () => {
 });
 
 registerScript('maintRunTests', async () => {
-    const { ProcessManager } = await import('../core/process-manager');
-    const chalk = (await import('chalk')).default;
-    const inquirer = (await import('inquirer')).default;
-
-    console.log(chalk.blue('\n🧪 Running workspace tests in a new window...'));
-    // Ensure the window stays open after tests complete so the user can see the results
-    await ProcessManager.spawnDetachedWindow('Workspace Tests', 'npm run test & pause', process.cwd());
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
-    return 'maintenance-menu';
+    const handler = registry.getScript('tools:runTests');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run tests.'));
 });
 
 registerScript('maintRunBuild', async () => {
-    const { ProcessManager } = await import('../core/process-manager');
-    const chalk = (await import('chalk')).default;
-    const inquirer = (await import('inquirer')).default;
-    const fs = (await import('fs-extra')).default;
-    const path = (await import('path')).default;
-
-    const cwd = process.cwd();
-    const bunLock = path.join(cwd, 'bun.lockb');
-    const bunLockText = path.join(cwd, 'bun.lock');
-    let useBun = false;
-
-    if (await fs.pathExists(bunLock) || await fs.pathExists(bunLockText)) {
-        useBun = true;
-    } else {
-        const pkgPath = path.join(cwd, 'package.json');
-        if (await fs.pathExists(pkgPath)) {
-            try {
-                const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
-                if (typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith('bun@')) {
-                    useBun = true;
-                }
-            } catch { }
-        }
-    }
-
-    const buildCmd = useBun ? 'bun run build & pause' : 'npm run build & pause';
-
-    console.log(chalk.blue(`\n🏗️ Running workspace build in a new window... (${useBun ? 'bun' : 'npm'})`));
-    await ProcessManager.spawnDetachedWindow('Workspace Build', buildCmd, cwd);
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
-    return 'maintenance-menu';
+    const handler = registry.getScript('tools:runBuild');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run build.'));
 });
 
 // --- Branching Logic Handlers ---
@@ -2250,6 +2154,17 @@ registerScript('enterMaintenance', async () => {
     return 'settings';
 });
 
+registerScript('enterTools', async () => {
+    const inquirer = (await import('inquirer')).default;
+    const chalk = (await import('chalk')).default;
+    const ok = await requireMaintenanceAccess();
+    if (ok) return 'tools-menu';
+
+    console.error(chalk.red('\n🚫 Unauthorized. Tools are restricted to Owners/Admins of the Vishnu project.'));
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    return 'settings';
+});
+
 registerScript('enterMaintenanceDeploy', async () => {
     const inquirer = (await import('inquirer')).default;
     const chalk = (await import('chalk')).default;
@@ -2262,26 +2177,13 @@ registerScript('enterMaintenanceDeploy', async () => {
 });
 
 registerScript('maintDeployPrep', async () => {
-    const inquirer = (await import('inquirer')).default;
-    const chalk = (await import('chalk')).default;
-
-    const ok = await runDeployPrepCore();
-    if (!ok) {
-        console.log(chalk.red('\n❌ Deploy prep encountered failures. Check logs above.'));
-    } else {
-        console.log(chalk.green('\n✅ Deploy prep completed successfully.'));
-    }
-
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-    return 'maint-deploy-menu';
+    const handler = registry.getScript('tools:deployPrep');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run deploy prep.'));
 });
 
 registerScript('maintDeployPrepWindow', async () => {
-    const { ProcessManager } = await import('../core/process-manager');
-    await ProcessManager.spawnDetachedWindow(
-        'Vishnu Deploy Prep',
-        'codeman --run-maint-deploy-prep',
-        process.cwd()
-    );
-    return 'maint-deploy-menu';
+    const handler = registry.getScript('tools:deployPrep');
+    if (handler) return await handler();
+    console.log(chalk.red('Tools plugin not loaded. Cannot run deploy prep.'));
 });

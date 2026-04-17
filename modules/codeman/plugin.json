@@ -1,0 +1,8 @@
+{
+  "id": "codeman",
+  "name": "Codeman Bridge Module",
+  "version": "1.0.0",
+  "description": "Module-backed launcher bridge for the live Codeman implementation in /codeman",
+  "main": "index.ts",
+  "isSystemPlugin": true
+}

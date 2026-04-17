@@ -1,0 +1,1 @@
+export { runDeployCommand } from './deploy';

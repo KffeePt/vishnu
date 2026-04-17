@@ -48,6 +48,23 @@ registry.register(createSchemaMenu(BuildMenuDef));
 registry.register(createSchemaMenu(SettingsMenuDef));
 registry.register(createSchemaMenu(UpdateMenuDef));
 
+let modulesLoaded = false;
+
+async function ensureModulesLoaded() {
+  if (modulesLoaded) {
+    return;
+  }
+
+  const { getPluginLoader } = await import('@vishnu/runtime');
+  const loader = getPluginLoader({
+    extensionsDir: path.join(process.cwd(), 'modules'),
+    debug: true
+  });
+  console.log(chalk.blue('\n🔌 Loading Vishnu modules...'));
+  await loader.loadAllPlugins();
+  modulesLoaded = true;
+}
+
 
 async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean> {
   const fs = await import('fs');
@@ -287,6 +304,8 @@ async function handleCLIArgs(): Promise<boolean> {
 
   // If we get here and there are options invoked
   if (Object.keys(options).length > 0) {
+      await ensureModulesLoaded();
+
       const runWithPause = async (task: string, fn: () => Promise<any>) => {
           const chalk = (await import('chalk')).default;
           const inquirer = (await import('inquirer')).default;
@@ -404,8 +423,11 @@ async function handleCLIArgs(): Promise<boolean> {
       }
       if (options.runMaintDeployPrep) {
           await runWithPause('Maint Deploy Prep', async () => {
-              const { runDeployPrepCore } = await import('./config/menu-map');
-              return await runDeployPrepCore();
+              const { registry } = await import('./core/registry');
+              const handler = registry.getScript('maintDeployPrep');
+              if (handler) return await handler();
+              console.log(chalk.red('Maintenance handler "maintDeployPrep" not found.'));
+              return false;
           });
           return true;
       }
@@ -644,6 +666,9 @@ async function bootstrap() {
     //   const { FirebaseContextManager } = await import('./managers/firebase-context');
     //   await FirebaseContextManager.checkContext();
     // }
+
+    // Load Vishnu modules and register their intents
+    await ensureModulesLoaded();
 
     // Determine Start Node
     // We ALWAYS start at ROOT (Launcher) so users select a project 

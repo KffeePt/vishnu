@@ -4,11 +4,15 @@
     "description": "The Vishnu Preserver System",
     "main": "index.js",
     "type": "module",
+    "workspaces": [
+        "packages/*",
+        "modules/*"
+    ],
     "scripts": {
-        "codeman": "tsx watch codeman/interactive-cli.ts",
+        "codeman": "tsx watch modules/codeman/interactive-cli.ts",
         "lint": "tsc --noEmit",
         "test": "vitest run tests",
-        "build:verify": "tsx codeman/verify-build.ts",
+        "build:verify": "tsx modules/codeman/verify-build.ts",
         "firebase:setup": "tsx scripts/setup_firebase_credentials.ts"
     },
     "dependencies": {

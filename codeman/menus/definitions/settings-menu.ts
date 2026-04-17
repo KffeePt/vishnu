@@ -15,16 +15,10 @@ export const SettingsMenuDef: MenuDefinition = {
             value: 'sys-gemini',
             action: { type: 'script', handler: 'manageGeminiKeys' }
         },
-        { label: '---', value: 'sep_admin', type: 'separator' },
         {
-            label: '🔧 Maintenance',
-            value: 'maintenance',
-            action: { type: 'script', handler: 'enterMaintenance' }
-        },
-        {
-            label: '🚀 Admin Deploy Options',
-            value: 'maintenance-deploy',
-            action: { type: 'script', handler: 'enterMaintenanceDeploy' }
+            label: '🔧 Tools',
+            value: 'tools',
+            action: { type: 'script', handler: 'enterTools' }
         },
         { label: '---', value: 'sep1', type: 'separator' },
         {

@@ -6,9 +6,9 @@ export const MaintDeployMenuDef: MenuDefinition = {
     type: 'static',
     options: [
         {
-            label: '🧪 Deploy Prep (Local Checks) [New Window]',
+            label: '🧪 Deploy Prep (Local Checks)',
             value: 'maint-deploy-prep',
-            action: { type: 'script', handler: 'maintDeployPrepWindow' }
+            action: { type: 'script', handler: 'maintDeployPrep' }
         },
         {
             label: '🌟 Deploy All (TUI + Dashboard + Rules)',

@@ -1,3 +1,14 @@
+/*
+Legacy CLI entry disabled during RFC-011 migration.
+
+Original implementation has been moved to:
+  modules/codeman/cli.ts
+
+The preserved code below is intentionally commented out so this legacy path
+is no longer the functional source of truth.
+*/
+
+/*
 #!/usr/bin/env node
 
 import { Command } from 'commander';
@@ -83,3 +94,6 @@ program
   });
 
 program.parse();
+*/
+
+throw new Error('Legacy codeman/cli.ts is disabled. Use modules/codeman/cli.ts.');

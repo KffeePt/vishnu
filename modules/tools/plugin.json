@@ -1,0 +1,8 @@
+{
+  "id": "tools",
+  "name": "Vishnu Tools",
+  "version": "1.0.0",
+  "description": "Vishnu maintenance and deployment tools",
+  "main": "index.ts",
+  "isSystemPlugin": true
+}

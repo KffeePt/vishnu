@@ -38,7 +38,7 @@ export async function restartCLI(startNode?: string): Promise<void> {
         }
         // ---------------------------------------------------------
 
-        const cliEntry = path.resolve(__dirname, '../interactive-cli.ts');
+        const cliEntry = path.resolve(__dirname, '../../modules/codeman/interactive-cli.ts');
         const args = ['tsx', cliEntry];
         if (startNode) {
             args.push(startNode);
