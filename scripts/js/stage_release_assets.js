@@ -64,6 +64,34 @@ function runGpg(command, args) {
     });
 }
 
+function resolveSigningKey(gpgCommand) {
+    const envKey = (process.env.VISHNU_GPG_KEY_ID || '').trim();
+    if (envKey) {
+        return envKey;
+    }
+
+    const result = runGpg(gpgCommand, ['--batch', '--with-colons', '--fingerprint', '--list-secret-keys']);
+    if (result.status !== 0) {
+        return '';
+    }
+
+    const lines = String(result.stdout || '').split(/\r?\n/);
+    let sawSecretKey = false;
+    for (const line of lines) {
+        const parts = line.split(':');
+        const recordType = parts[0] || '';
+        if (recordType === 'sec') {
+            sawSecretKey = true;
+            continue;
+        }
+        if (sawSecretKey && recordType === 'fpr') {
+            return (parts[9] || '').trim();
+        }
+    }
+
+    return '';
+}
+
 function stageRequiredFiles() {
     ensureDir(RELEASE_DIR);
     for (const fileName of [...REQUIRED_FILES, ...OPTIONAL_FILES]) {
@@ -83,7 +111,6 @@ function stageRequiredFiles() {
 function signInstallersIfPossible() {
     const requireSignatures = /^(1|true|yes)$/i.test(process.env.VISHNU_REQUIRE_SIGNATURES || '');
     const gpgCommand = resolveGpg();
-    const keyId = (process.env.VISHNU_GPG_KEY_ID || '').trim();
     const passphrase = process.env.VISHNU_GPG_PASSPHRASE || '';
     const signatureFiles = [];
 
@@ -95,6 +122,17 @@ function signInstallersIfPossible() {
         return signatureFiles;
     }
 
+    const keyId = resolveSigningKey(gpgCommand);
+    if (!keyId) {
+        if (requireSignatures) {
+            fail('[FAIL] No GPG secret signing key was found. Import a Gpg4win signing certificate or set VISHNU_GPG_KEY_ID.');
+        }
+        log('[WARN] No GPG secret signing key was found. Skipping .asc signature generation.');
+        return signatureFiles;
+    }
+
+    log(`[INFO] Signing release assets with GPG key: ${keyId}`);
+
     for (const fileName of INSTALLER_FILES) {
         const targetPath = path.join(RELEASE_DIR, fileName);
         const signaturePath = path.join(RELEASE_DIR, `${fileName}.asc`);
@@ -104,9 +142,7 @@ function signInstallersIfPossible() {
         if (passphrase) {
             args.push('--pinentry-mode', 'loopback', '--passphrase', passphrase);
         }
-        if (keyId) {
-            args.push('--local-user', keyId);
-        }
+        args.push('--local-user', keyId);
         args.push('--output', signaturePath, '--detach-sign', targetPath);
 
         const result = runGpg(gpgCommand, args);

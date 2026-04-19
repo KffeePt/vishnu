@@ -165,12 +165,13 @@ echo.
 echo [5/7] Publishing Tag %TAG%...
 git rev-parse %TAG% >nul 2>nul
 if not errorlevel 1 goto :TAG_EXISTS
+git ls-remote --exit-code --tags origin refs/tags/%TAG% >nul 2>nul
+if not errorlevel 1 goto :TAG_EXISTS
 goto :CREATE_TAG
 
 :TAG_EXISTS
-if "%BLANK_VERSION_SELECTED%"=="1" if /i not "%TAG%"=="%LATEST_TAG%" goto :TAG_EXISTS_NOT_LATEST
 echo [WARN] Tag %TAG% already exists locally or remotely.
-echo        Deleting the old release and republishing it from the current build.
+echo        Republishing that exact version from the current staged build.
 git tag -d %TAG% >nul 2>nul
 git push origin :refs/tags/%TAG% >nul 2>nul
 gh release delete %TAG% --yes >nul 2>nul
@@ -267,14 +268,6 @@ goto :END
 
 :TAG_PUSH_FAILED
 echo [FAIL] Failed to push tag to origin.
-set "EXIT_CODE=1"
-goto :END
-
-:TAG_EXISTS_NOT_LATEST
-echo [FAIL] Tag %TAG% already exists, but it is not the latest published release.
-echo        Leaving the version blank only republishes the latest exact tag.
-echo        Choose a different channel or iteration to create a new release,
-echo        or type the exact version manually if you want to republish an older tag.
 set "EXIT_CODE=1"
 goto :END
 
