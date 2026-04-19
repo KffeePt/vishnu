@@ -39,3 +39,15 @@ jobs:
     - name: Build dashboard
       working-directory: dashboard
       run: bun run build
+
+    - name: Install Functions dependencies
+      working-directory: functions
+      run: bun install --frozen-lockfile
+
+    - name: Lint Functions
+      working-directory: functions
+      run: bun run lint
+
+    - name: Build Functions
+      working-directory: functions
+      run: bun run build

@@ -1,0 +1,14 @@
+{
+  "tag": "v1.0.1-beta.5",
+  "version": "1.0.1-beta.5",
+  "builtAt": "2026-04-19T09:13:05.196Z",
+  "assets": [
+    "vishnu-installer.exe",
+    "vishnu-installer.sh",
+    "vishnu-installer.exe.sha256",
+    "vishnu-installer.sh.sha256",
+    "vishnu-installer.exe.asc",
+    "vishnu-installer.sh.asc"
+  ],
+  "signaturesPresent": true
+}

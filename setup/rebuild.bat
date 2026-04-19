@@ -2,7 +2,11 @@
 pushd "%~dp0"
 taskkill /F /IM vishnu-installer.exe >nul 2>&1
 if not exist "output" mkdir output
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "(Get-Content ..\version.json | ConvertFrom-Json).version"`) do set VISHNU_VERSION=%%V
+if defined VISHNU_RELEASE_VERSION (
+    set "VISHNU_VERSION=%VISHNU_RELEASE_VERSION%"
+) else (
+    for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "(Get-Content ..\version.json | ConvertFrom-Json).version"`) do set VISHNU_VERSION=%%V
+)
 if "%VISHNU_VERSION%"=="" (
     echo [FAIL] Could not read version.json
     popd

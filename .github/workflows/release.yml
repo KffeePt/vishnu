@@ -6,104 +6,22 @@ on:
       - 'v*'
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Read Vishnu Version
-      id: version
-      shell: pwsh
-      run: |
-        $version = (Get-Content version.json | ConvertFrom-Json).version
-        "value=$version" >> $env:GITHUB_OUTPUT
-
-    - name: Compile C++ Installer
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Force setup/output | Out-Null
-        g++ -std=c++17 -DINSTALLER_VERSION_STR=\"${{ steps.version.outputs.value }}\" -o setup/output/vishnu-installer.exe setup/src/main.cpp -static -ladvapi32 -lshlwapi -luser32 -lole32 -luuid
-        
-    - name: Upload Windows Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: vishnu-installer.exe
-        path: setup/output/vishnu-installer.exe
-
-  build-unix:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Read Vishnu Version
-      id: version
-      run: |
-        version=$(python - <<'PY'
-import json
-print(json.load(open('version.json'))['version'])
-PY
-)
-        echo "value=$version" >> "$GITHUB_OUTPUT"
-
-    - name: Package Bash Installer
-      run: |
-        mkdir -p setup/output
-        sed "s/__INSTALLER_VERSION__/${{ steps.version.outputs.value }}/g" setup/src/installer.sh > setup/output/vishnu-installer.sh
-        
-    - name: Upload Unix Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: vishnu-installer.sh
-        path: setup/output/vishnu-installer.sh
-
   create-release:
-    needs: [build-windows, build-unix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Download Windows Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: vishnu-installer.exe
-        path: setup/output/
-        
-    - name: Download Unix Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: vishnu-installer.sh
-        path: setup/output/
 
-    - name: Normalize release assets
+    - name: Verify staged release assets
       run: |
-        chmod +x setup/output/vishnu-installer.sh
-        sha256sum setup/output/vishnu-installer.exe > setup/output/vishnu-installer.exe.sha256
-        sha256sum setup/output/vishnu-installer.sh > setup/output/vishnu-installer.sh.sha256
-
-    - name: Import release signing key
-      if: ${{ secrets.VISHNU_GPG_PRIVATE_KEY != '' }}
-      env:
-        VISHNU_GPG_PRIVATE_KEY: ${{ secrets.VISHNU_GPG_PRIVATE_KEY }}
-      run: |
-        export GNUPGHOME="$(mktemp -d)"
-        printf '%s' "$VISHNU_GPG_PRIVATE_KEY" | gpg --batch --import
-        gpg --batch --list-secret-keys
-        echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-
-    - name: Sign release assets
-      if: ${{ secrets.VISHNU_GPG_PRIVATE_KEY != '' }}
-      env:
-        VISHNU_GPG_PASSPHRASE: ${{ secrets.VISHNU_GPG_PASSPHRASE }}
-      run: |
-        gpg --batch --yes --pinentry-mode loopback --passphrase "$VISHNU_GPG_PASSPHRASE" --armor --detach-sign setup/output/vishnu-installer.exe
-        gpg --batch --yes --pinentry-mode loopback --passphrase "$VISHNU_GPG_PASSPHRASE" --armor --detach-sign setup/output/vishnu-installer.sh
-
-    - name: Warn when signing secrets are missing
-      if: ${{ secrets.VISHNU_GPG_PRIVATE_KEY == '' }}
-      run: |
-        echo "::warning::VISHNU_GPG_PRIVATE_KEY is not configured. Release assets will include .sha256 files but no .asc signatures."
+        test -f bin/release/vishnu-installer.exe
+        test -f bin/release/vishnu-installer.sh
+        test -f bin/release/vishnu-installer.exe.sha256
+        test -f bin/release/vishnu-installer.sh.sha256
+        test -f bin/release/vishnu-installer.exe.asc
+        test -f bin/release/vishnu-installer.sh.asc
+        chmod +x bin/release/vishnu-installer.sh
 
     - name: Create Stable Release
       if: ${{ !contains(github.ref_name, '-') }}
@@ -113,7 +31,7 @@ PY
         make_latest: true
         prerelease: false
         files: |
-          setup/output/*
+          bin/release/*
 
     - name: Create Prerelease
       if: ${{ contains(github.ref_name, '-') }}
@@ -123,51 +41,58 @@ PY
         make_latest: false
         prerelease: true
         files: |
-          setup/output/*
+          bin/release/*
 
   deploy-functions:
     needs: [create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      FIREBASE_PROJECT_ID: ${{ secrets.VISHNU_FIREBASE_PROJECT_ID }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT }}
     steps:
     - uses: actions/checkout@v4
 
+    - name: Check Firebase deploy configuration
+      id: firebase
+      shell: bash
+      run: |
+        if [ -z "$FIREBASE_PROJECT_ID" ] || [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Skipping Cloud Functions deploy because VISHNU_FIREBASE_SERVICE_ACCOUNT or VISHNU_FIREBASE_PROJECT_ID is not configured."
+        else
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Setup Node.js
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
       uses: actions/setup-node@v4
       with:
         node-version: 20
 
     - name: Setup Bun
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
       uses: oven-sh/setup-bun@v2
 
-    - name: Warn when Firebase deploy secrets are missing
-      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT == '' || secrets.VISHNU_FIREBASE_PROJECT_ID == '' }}
-      run: |
-        echo "::warning::Skipping Cloud Functions deploy because VISHNU_FIREBASE_SERVICE_ACCOUNT or VISHNU_FIREBASE_PROJECT_ID is not configured."
-
     - name: Authenticate to Google Cloud
-      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
       uses: google-github-actions/auth@v2
       with:
-        credentials_json: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT }}
-
-    - name: Install Firebase CLI
-      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
-      run: npm install -g firebase-tools
+        credentials_json: ${{ env.FIREBASE_SERVICE_ACCOUNT }}
 
     - name: Install root dependencies
-      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
       run: bun install --frozen-lockfile
 
     - name: Install Functions dependencies
-      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
       working-directory: functions
-      run: npm ci
+      run: bun install --frozen-lockfile
 
     - name: Deploy Cloud Functions
-      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
       env:
-        GOOGLE_CLOUD_PROJECT: ${{ secrets.VISHNU_FIREBASE_PROJECT_ID }}
-        GCLOUD_PROJECT: ${{ secrets.VISHNU_FIREBASE_PROJECT_ID }}
-      run: firebase deploy --only functions --project "$GOOGLE_CLOUD_PROJECT" --non-interactive
+        GOOGLE_CLOUD_PROJECT: ${{ env.FIREBASE_PROJECT_ID }}
+        GCLOUD_PROJECT: ${{ env.FIREBASE_PROJECT_ID }}
+      run: bunx firebase-tools deploy --only functions --project "$GOOGLE_CLOUD_PROJECT" --non-interactive

@@ -27,7 +27,7 @@ echo               Continuous Delivery Pipeline
 echo ========================================================
 echo.
 
-echo [1/6] Checking Environment...
+echo [1/7] Checking Environment...
 call :RESOLVE_BUN
 if errorlevel 1 goto :END
 
@@ -43,8 +43,10 @@ if errorlevel 1 goto :GIT_MISSING
 echo [OK] GitHub CLI and Git are ready.
 echo.
 
-call :GET_LATEST_VERSION
-call :GET_BASE_VERSION_FROM_TAG "%LATEST_TAG%"
+set "LATEST_TAG="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null; if ($tag) { $tag }"`) do set "LATEST_TAG=%%V"
+set "LATEST_BASE_VERSION="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%LATEST_TAG%'; if ($tag -match '^v(\d+\.\d+\.\d+)(?:-(?:alpha|beta)\.\d+)?$') { Write-Output $matches[1] }"`) do set "LATEST_BASE_VERSION=%%V"
 if not "%LATEST_TAG%"=="" (
     echo Current latest release tag: %LATEST_TAG%
 ) else (
@@ -95,7 +97,8 @@ echo.
 goto :ASK_VER
 
 :ASK_ALPHA_ITERATION
-call :GET_NEXT_ITERATION "%VER_INPUT%" "alpha"
+set "NEXT_ITERATION=1"
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$version='%VER_INPUT%'; $channel='alpha'; $escaped=[regex]::Escape($version); $pattern='^v' + $escaped + '-' + $channel + '\.(\d+)$'; $tags = gh release list --limit 1000 --json tagName --jq '.[].tagName' 2>$null; $max = 0; foreach ($tag in ($tags -split \"`r?`n\")) { if ($tag -match $pattern) { $candidate = [int]$matches[1]; if ($candidate -gt $max) { $max = $candidate } } }; Write-Output ($max + 1)"`) do set "NEXT_ITERATION=%%V"
 set /p ITERATION_INPUT="Enter alpha iteration number [%NEXT_ITERATION%]: "
 if "%ITERATION_INPUT%"=="" (
     set "ITERATION_INPUT=%NEXT_ITERATION%"
@@ -110,7 +113,8 @@ set "TAG=v%VER_INPUT%-alpha.%ITERATION_INPUT%"
 goto :PROMPT_COMMIT
 
 :ASK_BETA_ITERATION
-call :GET_NEXT_ITERATION "%VER_INPUT%" "beta"
+set "NEXT_ITERATION=1"
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$version='%VER_INPUT%'; $channel='beta'; $escaped=[regex]::Escape($version); $pattern='^v' + $escaped + '-' + $channel + '\.(\d+)$'; $tags = gh release list --limit 1000 --json tagName --jq '.[].tagName' 2>$null; $max = 0; foreach ($tag in ($tags -split \"`r?`n\")) { if ($tag -match $pattern) { $candidate = [int]$matches[1]; if ($candidate -gt $max) { $max = $candidate } } }; Write-Output ($max + 1)"`) do set "NEXT_ITERATION=%%V"
 set /p ITERATION_INPUT="Enter beta iteration number [%NEXT_ITERATION%]: "
 if "%ITERATION_INPUT%"=="" (
     set "ITERATION_INPUT=%NEXT_ITERATION%"
@@ -134,23 +138,31 @@ echo.
 set /p CONFIRM="Proceed? (y/N): "
 if /i not "%CONFIRM%"=="y" goto :END
 
+echo.
+echo [2/7] Running the Bun CI build pipeline and staging release assets...
+set "VISHNU_NO_PAUSE=1"
+set "VISHNU_RELEASE_TAG=%TAG%"
+set "VISHNU_RELEASE_VERSION=%TAG:v=%"
+set "VISHNU_REQUIRE_SIGNATURES=1"
+call scripts\ci.bat
+set "VISHNU_NO_PAUSE="
+set "VISHNU_RELEASE_TAG="
+set "VISHNU_RELEASE_VERSION="
+set "VISHNU_REQUIRE_SIGNATURES="
+if errorlevel 1 goto :CI_FAILED
+
+echo.
+echo [3/7] Creating the release commit...
 call :CREATE_COMMIT
 if errorlevel 1 goto :END
 
 echo.
-echo [2/6] Running the Bun CI build pipeline...
-set "VISHNU_NO_PAUSE=1"
-call scripts\ci.bat
-set "VISHNU_NO_PAUSE="
-if errorlevel 1 goto :CI_FAILED
-
-echo.
-echo [3/6] Pushing the current branch for Vercel...
+echo [4/7] Pushing the current branch for Vercel...
 git push origin HEAD
 if errorlevel 1 goto :BRANCH_PUSH_FAILED
 
 echo.
-echo [4/6] Publishing Tag %TAG%...
+echo [5/7] Publishing Tag %TAG%...
 git rev-parse %TAG% >nul 2>nul
 if not errorlevel 1 goto :TAG_EXISTS
 goto :CREATE_TAG
@@ -171,12 +183,12 @@ git push origin %TAG%
 if errorlevel 1 goto :TAG_PUSH_FAILED
 
 echo.
-echo [5/6] Waiting for the GitHub release to appear...
+echo [6/7] Waiting for the GitHub release to appear...
 call :WAIT_FOR_RELEASE "%TAG%"
 if errorlevel 1 goto :RELEASE_WAIT_FAILED
 echo.
 echo [SUCCESS] Release %TAG% is live.
-echo [6/6] The latest branch push is now available for Vercel's dashboard deployment hooks.
+echo [7/7] The latest branch push is now available for Vercel's dashboard deployment hooks.
 echo Track the workflow at: https://github.com/KffeePt/vishnu/actions/workflows/release.yml
 echo Latest stable downloads:
 echo   https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.exe
@@ -207,24 +219,9 @@ if errorlevel 1 goto :COMMIT_FAILED
 echo Commit created successfully.
 exit /b 0
 
-:GET_LATEST_VERSION
-set "LATEST_TAG="
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null; if ($tag) { $tag }"`) do set "LATEST_TAG=%%V"
-exit /b 0
-
-:GET_BASE_VERSION_FROM_TAG
-set "LATEST_BASE_VERSION="
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%~1'; if ($tag -match '^v(\d+\.\d+\.\d+)(?:-(?:alpha|beta)\.\d+)?$') { Write-Output $matches[1] }"`) do set "LATEST_BASE_VERSION=%%V"
-exit /b 0
-
-:GET_NEXT_ITERATION
-set "NEXT_ITERATION=1"
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$version='%~1'; $channel='%~2'; $escaped=[regex]::Escape($version); $pattern='^v' + $escaped + '-' + $channel + '\.(\d+)$'; $tags = gh release list --limit 1000 --json tagName --jq '.[].tagName' 2>$null; $max = 0; foreach ($tag in ($tags -split \"`r?`n\")) { if ($tag -match $pattern) { $candidate = [int]$matches[1]; if ($candidate -gt $max) { $max = $candidate } } }; Write-Output ($max + 1)"`) do set "NEXT_ITERATION=%%V"
-exit /b 0
-
 :WAIT_FOR_RELEASE
 set "RELEASE_READY="
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%~1'; $deadline=(Get-Date).AddMinutes(10); do { try { $raw = gh release view $tag --json tagName,assets 2>$null; if ($LASTEXITCODE -eq 0 -and $raw) { $release = $raw | ConvertFrom-Json; $count = @($release.assets).Count; if ($count -ge 2) { Write-Host ('Release assets detected: ' + $count); Write-Output 'ready'; exit 0 } } } catch { }; Start-Sleep -Seconds 10 } while ((Get-Date) -lt $deadline); exit 1"`) do set "RELEASE_READY=%%V"
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%~1'; $deadline=(Get-Date).AddMinutes(10); $required=@('vishnu-installer.exe','vishnu-installer.sh','vishnu-installer.exe.sha256','vishnu-installer.sh.sha256','vishnu-installer.exe.asc','vishnu-installer.sh.asc'); do { try { $raw = gh release view $tag --json tagName,assets 2>$null; if ($LASTEXITCODE -eq 0 -and $raw) { $release = $raw | ConvertFrom-Json; $names = @($release.assets | ForEach-Object { $_.name }); $missing = @($required | Where-Object { $_ -notin $names }); if ($missing.Count -eq 0) { Write-Host ('Release assets detected: ' + $names.Count); Write-Output 'ready'; exit 0 } } } catch { }; Start-Sleep -Seconds 10 } while ((Get-Date) -lt $deadline); exit 1"`) do set "RELEASE_READY=%%V"
 if /i "%RELEASE_READY%"=="ready" exit /b 0
 exit /b 1
 
