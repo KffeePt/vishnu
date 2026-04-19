@@ -8,7 +8,12 @@ function stripAnsi(str: string): string {
 export async function List<T>(
     message: string,
     choices: ({ name: string; value: T } | { type: 'separator'; line: string })[],
-    options: { pageSize?: number; overlay?: string; overlayTTL?: number } = {}
+    options: {
+        pageSize?: number;
+        overlay?: string;
+        overlayTTL?: number;
+        keyBindings?: Array<{ key: string; label: string; action: (currentChoice: T) => T }>;
+    } = {}
 ): Promise<T> {
     return new Promise((resolve, reject) => {
         // IO Manager should be active. 
@@ -88,7 +93,14 @@ export async function List<T>(
 
                 if (windowStart + actualPageSize < choices.length) output += chalk.gray('  ↓ ...') + '\x1b[K\n';
 
-                output += chalk.dim('\n(Use arrows to move, Enter to select, \'q\' to go back)')
+                const hotkeyHelp = (options.keyBindings || [])
+                    .map((binding) => `'${binding.key}' ${binding.label}`)
+                    .join(', ');
+                const helpLine = hotkeyHelp
+                    ? `(Use arrows to move, Enter to select, 'q' to go back, ${hotkeyHelp})`
+                    : `(Use arrows to move, Enter to select, 'q' to go back)`;
+
+                output += chalk.dim(`\n${helpLine}`)
                     .split('\n').map(l => l + '\x1b[K').join('\n') + '\n';
 
                 // Clear remaining screen logic
@@ -183,6 +195,17 @@ export async function List<T>(
             } else if (char === '\u0003') { // Ctrl+C
                 cleanup();
                 process.exit(0);
+            } else if (options.keyBindings?.length) {
+                const binding = options.keyBindings.find((item) => item.key.toLowerCase() === char.toLowerCase());
+                if (binding) {
+                    cleanup();
+                    const selected = choices[index];
+                    if ('value' in selected) {
+                        resolve(binding.action(selected.value));
+                    } else {
+                        resolve('__BACK__' as T);
+                    }
+                }
             }
         };
 

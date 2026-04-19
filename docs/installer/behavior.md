@@ -41,8 +41,8 @@ The **Vishnu Installer** (`vishnu-installer.exe` / `vishnu-installer.sh`) bootst
 
 ## 5. Runtime Update Behavior
 
-- `bin/vishnu.js` invokes `update.js` before launching Codeman.
-- `update.js` only mutates the managed install recorded in `~/.vishnu/install.json`.
+- `bin/vishnu.js` invokes `scripts/js/update.js` before launching Codeman.
+- `scripts/js/update.js` only mutates the managed install recorded in `~/.vishnu/install.json`.
 - The updater fetches release tags, resolves the newest stable tag, verifies installer compatibility, resets the managed repo to that tag on branch `stable`, and runs `npm install`.
 
 ## 6. Uninstall Flow

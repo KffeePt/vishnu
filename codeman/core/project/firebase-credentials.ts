@@ -76,14 +76,65 @@ export interface CredentialInspectionResult {
     suggestedMoves: string[];
 }
 
+export interface ResolvedFirebaseBackendConfig {
+    projectId: string;
+    apiKey: string;
+    authDomain: string;
+    databaseURL: string;
+    serviceAccountPath: string;
+    clientSdkPath: string;
+    secretsDir: string;
+}
+
+export interface VishnuBackendCredentialBundleStatus {
+    ready: boolean;
+    secretsDir: string;
+    adminSdkPath: string | null;
+    clientSdkPath: string | null;
+    clientSdkJsonPath: string | null;
+    movedFiles: string[];
+    warnings: string[];
+    missingFiles: string[];
+    backendConfig: ResolvedFirebaseBackendConfig | null;
+}
+
 const SECRETS_DIRNAME = '.secrets';
+const LEGACY_SCRIPTS_SECRETS_DIRNAME = 'scripts/.secrets';
 const CANONICAL_ADMIN_SDK = 'admin-sdk.json';
 const CANONICAL_FIREBASE_SDK_JS = 'firebase-sdk.js';
 const CANONICAL_FIREBASE_SDK_JSON = 'firebase-sdk.json';
 const CANONICAL_OAUTH_JSON = 'client-secret-oauth.json';
+const SUPPORTED_SECRET_FILENAMES = [
+    CANONICAL_ADMIN_SDK,
+    CANONICAL_FIREBASE_SDK_JS,
+    CANONICAL_FIREBASE_SDK_JSON,
+    CANONICAL_OAUTH_JSON,
+    'client_secret_oauth.json',
+    'client_secret.json',
+    'stripe.json',
+    'app-check.json'
+];
 
 function readText(filePath: string): string {
     return fs.readFileSync(filePath, 'utf-8');
+}
+
+function loadProjectEnvValues(projectPath: string): Record<string, string> {
+    const envFiles = [
+        path.join(projectPath, '.env'),
+        path.join(projectPath, '.env.local')
+    ];
+
+    const merged: Record<string, string> = {};
+    for (const envFile of envFiles) {
+        if (!fs.existsSync(envFile)) {
+            continue;
+        }
+
+        Object.assign(merged, parseEnv(fs.readFileSync(envFile, 'utf-8')));
+    }
+
+    return merged;
 }
 
 function extractLiteralValue(content: string, key: string): string {
@@ -100,14 +151,56 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
-function ensureSecretsDirectory(projectPath: string): string {
-    const secretsDir = path.join(projectPath, SECRETS_DIRNAME);
+function listSupportedSecretsDirs(projectPath: string): string[] {
+    return [
+        path.join(projectPath, SECRETS_DIRNAME),
+        path.join(projectPath, 'scripts', SECRETS_DIRNAME)
+    ];
+}
+
+function scoreSecretsDirectory(secretsDir: string): number {
+    if (!fs.existsSync(secretsDir) || !fs.statSync(secretsDir).isDirectory()) {
+        return -1;
+    }
+
+    return SUPPORTED_SECRET_FILENAMES.reduce((score, fileName) => {
+        return score + (fs.existsSync(path.join(secretsDir, fileName)) ? 1 : 0);
+    }, 0);
+}
+
+export function resolveSupportedSecretsDir(projectPath: string): string {
+    const candidates = listSupportedSecretsDirs(projectPath)
+        .map((dirPath) => ({ dirPath, score: scoreSecretsDirectory(dirPath) }))
+        .sort((left, right) => right.score - left.score);
+
+    if (candidates.length > 0 && candidates[0].score >= 0) {
+        return candidates[0].dirPath;
+    }
+
+    return path.join(projectPath, SECRETS_DIRNAME);
+}
+
+export function getSecretsRelativeDir(projectPath: string, secretsDir: string): string {
+    const relative = path.relative(projectPath, secretsDir).replace(/\\/g, '/');
+    return relative || SECRETS_DIRNAME;
+}
+
+function isWithinSupportedSecretsDir(projectPath: string, filePath: string): boolean {
+    const normalizedTarget = path.resolve(filePath).toLowerCase();
+    return listSupportedSecretsDirs(projectPath)
+        .map((dirPath) => path.resolve(dirPath).toLowerCase())
+        .some((dirPath) => normalizedTarget.startsWith(dirPath));
+}
+
+function ensureSecretsDirectory(projectPath: string, preferredSecretsDir?: string): string {
+    const secretsDir = preferredSecretsDir || resolveSupportedSecretsDir(projectPath);
     fs.mkdirSync(secretsDir, { recursive: true });
     return secretsDir;
 }
 
-function ensureSecretsSupportFiles(projectPath: string): void {
-    const secretsDir = ensureSecretsDirectory(projectPath);
+function ensureSecretsSupportFiles(projectPath: string, preferredSecretsDir?: string): void {
+    const secretsDir = ensureSecretsDirectory(projectPath, preferredSecretsDir);
+    const relativeSecretsDir = getSecretsRelativeDir(projectPath, secretsDir);
     const gitignorePath = path.join(secretsDir, '.gitignore');
     if (!fs.existsSync(gitignorePath)) {
         fs.writeFileSync(gitignorePath, '*\n!.gitignore\n!README.md\n');
@@ -125,7 +218,12 @@ function ensureSecretsSupportFiles(projectPath: string): void {
                 '- admin-sdk.json',
                 '- firebase-sdk.js (literal Firebase web snippet source)',
                 '- firebase-sdk.json (generated readable form of firebase-sdk.js)',
-                '- client-secret-oauth.json'
+                '- client-secret-oauth.json',
+                '- stripe.json',
+                '- app-check.json',
+                '',
+                `This project currently supports both ${SECRETS_DIRNAME} and ${LEGACY_SCRIPTS_SECRETS_DIRNAME}.`,
+                `Active secrets folder: ${relativeSecretsDir}`
             ].join('\n') + '\n'
         );
     }
@@ -173,24 +271,27 @@ function moveIntoSecrets(
 ): string | null {
     if (!sourcePath) return null;
 
-    const destinationPath = path.join(ensureSecretsDirectory(projectPath), canonicalFilename);
+    const destinationDir = resolveSupportedSecretsDir(projectPath);
+    const destinationPath = path.join(ensureSecretsDirectory(projectPath, destinationDir), canonicalFilename);
+    const relativeSecretsDir = getSecretsRelativeDir(projectPath, destinationDir);
     if (path.resolve(sourcePath) === path.resolve(destinationPath)) {
         return destinationPath;
     }
 
     if (fs.existsSync(destinationPath)) {
         warnings.push(
-            `Both ${path.basename(sourcePath)} and ${path.join(SECRETS_DIRNAME, canonicalFilename)} exist. Keeping the .secrets version.`
+            `Both ${path.basename(sourcePath)} and ${path.join(relativeSecretsDir, canonicalFilename)} exist. Keeping the supported secrets-folder version.`
         );
         return destinationPath;
     }
 
     fs.renameSync(sourcePath, destinationPath);
-    movedFiles.push(`${path.relative(projectPath, sourcePath).replace(/\\/g, '/')} -> ${path.join(SECRETS_DIRNAME, canonicalFilename)}`);
+    movedFiles.push(`${path.relative(projectPath, sourcePath).replace(/\\/g, '/')} -> ${path.join(relativeSecretsDir, canonicalFilename).replace(/\\/g, '/')}`);
     return destinationPath;
 }
 
 function discoverOAuthCandidates(projectPath: string, secretsDir: string): string[] {
+    const extraSecretsDirs = listSupportedSecretsDirs(projectPath).filter((dirPath) => path.resolve(dirPath) !== path.resolve(secretsDir));
     const roots = [
         path.join(secretsDir, CANONICAL_OAUTH_JSON),
         path.join(secretsDir, 'client_secret_oauth.json'),
@@ -198,6 +299,11 @@ function discoverOAuthCandidates(projectPath: string, secretsDir: string): strin
         ...fs.readdirSync(secretsDir, { withFileTypes: true })
             .filter((entry) => entry.isFile() && /^client[-_]?secret.*\.json$/i.test(entry.name))
             .map((entry) => path.join(secretsDir, entry.name)),
+        ...extraSecretsDirs.flatMap((dirPath) => [
+            path.join(dirPath, CANONICAL_OAUTH_JSON),
+            path.join(dirPath, 'client_secret_oauth.json'),
+            path.join(dirPath, 'client_secret.json')
+        ]),
         path.join(projectPath, CANONICAL_OAUTH_JSON),
         path.join(projectPath, 'client_secret_oauth.json'),
         path.join(projectPath, 'client_secret.json'),
@@ -295,19 +401,26 @@ export function readGoogleOAuthClientFile(filePath: string): GoogleOAuthClientMe
 }
 
 export function normalizeCredentialFiles(projectPath: string): NormalizedCredentialFiles {
-    ensureSecretsSupportFiles(projectPath);
-    const secretsDir = path.join(projectPath, SECRETS_DIRNAME);
+    const secretsDir = resolveSupportedSecretsDir(projectPath);
+    ensureSecretsSupportFiles(projectPath, secretsDir);
+    const relativeSecretsDir = getSecretsRelativeDir(projectPath, secretsDir);
     const movedFiles: string[] = [];
     const warnings: string[] = [];
+    const additionalSecretsDirs = listSupportedSecretsDirs(projectPath).filter((dirPath) => path.resolve(dirPath) !== path.resolve(secretsDir));
 
     const adminSource = pickExistingPath([
         path.join(secretsDir, CANONICAL_ADMIN_SDK),
+        ...additionalSecretsDirs.map((dirPath) => path.join(dirPath, CANONICAL_ADMIN_SDK)),
         path.join(projectPath, CANONICAL_ADMIN_SDK)
     ]);
 
     const firebaseSource = pickExistingPath([
         path.join(secretsDir, CANONICAL_FIREBASE_SDK_JS),
         path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON),
+        ...additionalSecretsDirs.flatMap((dirPath) => [
+            path.join(dirPath, CANONICAL_FIREBASE_SDK_JS),
+            path.join(dirPath, CANONICAL_FIREBASE_SDK_JSON)
+        ]),
         path.join(projectPath, CANONICAL_FIREBASE_SDK_JS),
         path.join(projectPath, CANONICAL_FIREBASE_SDK_JSON),
         path.join(projectPath, 'firestore-sdk.js')
@@ -338,19 +451,21 @@ export function normalizeCredentialFiles(projectPath: string): NormalizedCredent
         if (shouldWriteJson || path.resolve(clientSdkPath).toLowerCase().endsWith('.js')) {
             writeGeneratedFirebaseSdkJson(generatedJsonPath, clientSdkPath, parsedClient);
             if (!clientSdkJsonPath) {
-                movedFiles.push(`${path.join(SECRETS_DIRNAME, CANONICAL_FIREBASE_SDK_JS)} -> ${path.join(SECRETS_DIRNAME, CANONICAL_FIREBASE_SDK_JSON)} (generated readable JSON)`);
+                movedFiles.push(
+                    `${path.join(relativeSecretsDir, CANONICAL_FIREBASE_SDK_JS).replace(/\\/g, '/')} -> ${path.join(relativeSecretsDir, CANONICAL_FIREBASE_SDK_JSON).replace(/\\/g, '/')} (generated readable JSON)`
+                );
             }
         }
     }
 
     const resolvedClientSdkJsonPath = pickExistingPath([
-        path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON)
+                path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON)
     ]);
 
     const missingFiles: string[] = [];
-    if (!adminSdkPath) missingFiles.push(path.join(SECRETS_DIRNAME, CANONICAL_ADMIN_SDK).replace(/\\/g, '/'));
-    if (!clientSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS}`);
-    if (!oauthClientPath) missingFiles.push(path.join(SECRETS_DIRNAME, CANONICAL_OAUTH_JSON).replace(/\\/g, '/'));
+    if (!adminSdkPath) missingFiles.push(path.join(relativeSecretsDir, CANONICAL_ADMIN_SDK).replace(/\\/g, '/'));
+    if (!clientSdkPath) missingFiles.push(`${relativeSecretsDir}/${CANONICAL_FIREBASE_SDK_JS}`);
+    if (!oauthClientPath) missingFiles.push(path.join(relativeSecretsDir, CANONICAL_OAUTH_JSON).replace(/\\/g, '/'));
 
     return {
         adminSdkPath,
@@ -364,14 +479,21 @@ export function normalizeCredentialFiles(projectPath: string): NormalizedCredent
 }
 
 export function inspectCredentialFiles(projectPath: string): CredentialInspectionResult {
-    const secretsDir = path.join(projectPath, SECRETS_DIRNAME);
+    const secretsDir = resolveSupportedSecretsDir(projectPath);
+    const relativeSecretsDir = getSecretsRelativeDir(projectPath, secretsDir);
+    const additionalSecretsDirs = listSupportedSecretsDirs(projectPath).filter((dirPath) => path.resolve(dirPath) !== path.resolve(secretsDir));
     const adminSdkPath = pickExistingPath([
         path.join(secretsDir, CANONICAL_ADMIN_SDK),
+        ...additionalSecretsDirs.map((dirPath) => path.join(dirPath, CANONICAL_ADMIN_SDK)),
         path.join(projectPath, CANONICAL_ADMIN_SDK)
     ]);
     const clientSdkPath = pickExistingPath([
         path.join(secretsDir, CANONICAL_FIREBASE_SDK_JS),
         path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON),
+        ...additionalSecretsDirs.flatMap((dirPath) => [
+            path.join(dirPath, CANONICAL_FIREBASE_SDK_JS),
+            path.join(dirPath, CANONICAL_FIREBASE_SDK_JSON)
+        ]),
         path.join(projectPath, CANONICAL_FIREBASE_SDK_JS),
         path.join(projectPath, CANONICAL_FIREBASE_SDK_JSON),
         path.join(projectPath, 'firestore-sdk.js')
@@ -387,20 +509,20 @@ export function inspectCredentialFiles(projectPath: string): CredentialInspectio
     );
     const clientSdkJsonPath = pickExistingPath([
         path.join(secretsDir, CANONICAL_FIREBASE_SDK_JSON),
+        ...additionalSecretsDirs.map((dirPath) => path.join(dirPath, CANONICAL_FIREBASE_SDK_JSON)),
         path.join(projectPath, CANONICAL_FIREBASE_SDK_JSON)
     ]);
 
     const missingFiles: string[] = [];
-    if (!adminSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_ADMIN_SDK}`);
-    if (!clientSdkPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS}`);
-    if (!oauthClientPath) missingFiles.push(`${SECRETS_DIRNAME}/${CANONICAL_OAUTH_JSON}`);
+    if (!adminSdkPath) missingFiles.push(`${relativeSecretsDir}/${CANONICAL_ADMIN_SDK}`);
+    if (!clientSdkPath) missingFiles.push(`${relativeSecretsDir}/${CANONICAL_FIREBASE_SDK_JS}`);
+    if (!oauthClientPath) missingFiles.push(`${relativeSecretsDir}/${CANONICAL_OAUTH_JSON}`);
 
     const suggestedMoves: string[] = [];
     const pushMove = (foundPath: string | null, canonicalName: string) => {
         if (!foundPath) return;
-        const normalized = foundPath.replace(/\\/g, '/');
-        if (!normalized.includes(`/${SECRETS_DIRNAME}/`)) {
-            suggestedMoves.push(`${path.relative(projectPath, foundPath).replace(/\\/g, '/')} -> ${SECRETS_DIRNAME}/${canonicalName}`);
+        if (!isWithinSupportedSecretsDir(projectPath, foundPath)) {
+            suggestedMoves.push(`${path.relative(projectPath, foundPath).replace(/\\/g, '/')} -> ${relativeSecretsDir}/${canonicalName}`);
         }
     };
 
@@ -495,13 +617,15 @@ function buildExampleEnvValues(
     framework: FrameworkEnvMode,
     envValues: EnvTemplateValues
 ): EnvTemplateValues {
+    const secretsDir = resolveSupportedSecretsDir(projectPath);
+    const relativeSecretsDir = getSecretsRelativeDir(projectPath, secretsDir);
     return {
         ...envValues,
-        GOOGLE_APPLICATION_CREDENTIALS: `${SECRETS_DIRNAME}/${CANONICAL_ADMIN_SDK}`,
-        GOOGLE_OAUTH_CLIENT_FILE: `${SECRETS_DIRNAME}/${CANONICAL_OAUTH_JSON}`,
+        GOOGLE_APPLICATION_CREDENTIALS: `${relativeSecretsDir}/${CANONICAL_ADMIN_SDK}`,
+        GOOGLE_OAUTH_CLIENT_FILE: `${relativeSecretsDir}/${CANONICAL_OAUTH_JSON}`,
         FIREBASE_WEB_SDK_FILE: envValues.FIREBASE_WEB_SDK_FILE?.endsWith('.json')
-            ? `${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JSON}`
-            : `${SECRETS_DIRNAME}/${CANONICAL_FIREBASE_SDK_JS}`,
+            ? `${relativeSecretsDir}/${CANONICAL_FIREBASE_SDK_JSON}`
+            : `${relativeSecretsDir}/${CANONICAL_FIREBASE_SDK_JS}`,
         GOOGLE_CLIENT_SECRET: '',
         GEMINI_API_KEY: '',
         ...(framework === 'nextjs'
@@ -665,6 +789,7 @@ export function ensureRootCredentialGitignore(projectPath: string): void {
     const gitignorePath = path.join(projectPath, '.gitignore');
     const requiredEntries = [
         '.secrets/',
+        'scripts/.secrets/',
         '.env.local',
         'admin-sdk.json',
         'firebase-sdk.js',
@@ -721,14 +846,138 @@ export function inspectFlutterFirebaseOptions(
 }
 
 export function loadExpectedFirebaseProjectId(projectPath: string): string | null {
-    const envPath = path.join(projectPath, '.env');
-    if (!fs.existsSync(envPath)) {
+    return resolveFirebaseProjectId(projectPath);
+}
+
+export function resolveGoogleApplicationCredentialsPath(projectPath: string): string | null {
+    const envValues = loadProjectEnvValues(projectPath);
+    const configuredPath = envValues.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+
+    if (configuredPath) {
+        const resolved = path.resolve(projectPath, configuredPath);
+        if (fs.existsSync(resolved)) {
+            return resolved;
+        }
+    }
+
+    const inspection = inspectCredentialFiles(projectPath);
+    if (inspection.adminSdkPath && fs.existsSync(inspection.adminSdkPath)) {
+        return inspection.adminSdkPath;
+    }
+
+    const fallback = path.join(resolveSupportedSecretsDir(projectPath), CANONICAL_ADMIN_SDK);
+    return fs.existsSync(fallback) ? fallback : null;
+}
+
+export function resolveFirebaseProjectId(projectPath: string): string | null {
+    const envValues = loadProjectEnvValues(projectPath);
+    const envProjectId = envValues.FIREBASE_PROJECT_ID?.trim() || envValues.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+    if (envProjectId) {
+        return envProjectId;
+    }
+
+    const inspection = inspectCredentialFiles(projectPath);
+    if (inspection.clientSdkPath && fs.existsSync(inspection.clientSdkPath)) {
+        const clientProjectId = readFirebaseWebSdkFile(inspection.clientSdkPath).projectId?.trim();
+        if (clientProjectId) {
+            return clientProjectId;
+        }
+    }
+
+    if (inspection.adminSdkPath && fs.existsSync(inspection.adminSdkPath)) {
+        const adminProjectId = readAdminSdkMetadata(inspection.adminSdkPath).projectId?.trim();
+        if (adminProjectId) {
+            return adminProjectId;
+        }
+    }
+
+    const firebasercPath = path.join(projectPath, '.firebaserc');
+    if (fs.existsSync(firebasercPath)) {
+        try {
+            const firebaserc = JSON.parse(fs.readFileSync(firebasercPath, 'utf-8'));
+            if (isObject(firebaserc.projects)) {
+                const defaultProject = asString(firebaserc.projects.default);
+                if (defaultProject) {
+                    return defaultProject;
+                }
+
+                const firstProject = Object.values(firebaserc.projects)
+                    .map((value) => asString(value))
+                    .find(Boolean);
+                if (firstProject) {
+                    return firstProject;
+                }
+            }
+        } catch {
+            // Ignore malformed .firebaserc and fall through.
+        }
+    }
+
+    return null;
+}
+
+export function resolveFirebaseBackendConfig(projectPath: string): ResolvedFirebaseBackendConfig | null {
+    const inspection = inspectCredentialFiles(projectPath);
+    const serviceAccountPath = resolveGoogleApplicationCredentialsPath(projectPath);
+    const clientSdkPath = inspection.clientSdkPath;
+
+    if (!serviceAccountPath || !clientSdkPath) {
         return null;
     }
 
-    const parsed = parseEnv(fs.readFileSync(envPath, 'utf-8'));
-    const projectId = parsed.FIREBASE_PROJECT_ID?.trim();
-    return projectId ? projectId : null;
+    const envValues = loadProjectEnvValues(projectPath);
+    const webConfig = readFirebaseWebSdkFile(clientSdkPath);
+    const projectId = resolveFirebaseProjectId(projectPath);
+
+    if (!projectId || !webConfig.apiKey) {
+        return null;
+    }
+
+    const authDomain = webConfig.authDomain?.trim() || `${projectId}.firebaseapp.com`;
+    const databaseURL = envValues.FIREBASE_DATABASE_URL?.trim()
+        || envValues.NEXT_PUBLIC_FIREBASE_DATABASE_URL?.trim()
+        || `https://${projectId}-default-rtdb.firebaseio.com/`;
+
+    return {
+        projectId,
+        apiKey: webConfig.apiKey.trim(),
+        authDomain,
+        databaseURL,
+        serviceAccountPath,
+        clientSdkPath,
+        secretsDir: resolveSupportedSecretsDir(projectPath)
+    };
+}
+
+export function ensureVishnuBackendCredentialBundle(projectPath: string): VishnuBackendCredentialBundleStatus {
+    ensureRootCredentialGitignore(projectPath);
+
+    const normalized = normalizeCredentialFiles(projectPath);
+    const backendConfig = resolveFirebaseBackendConfig(projectPath);
+    const secretsDir = resolveSupportedSecretsDir(projectPath);
+    const relativeSecretsDir = getSecretsRelativeDir(projectPath, secretsDir);
+    const missingFiles = [...normalized.missingFiles];
+
+    if (!normalized.clientSdkJsonPath) {
+        missingFiles.push(`${relativeSecretsDir}/${CANONICAL_FIREBASE_SDK_JSON}`);
+    }
+
+    return {
+        ready: Boolean(
+            normalized.adminSdkPath &&
+            normalized.clientSdkPath &&
+            normalized.clientSdkJsonPath &&
+            backendConfig
+        ),
+        secretsDir,
+        adminSdkPath: normalized.adminSdkPath,
+        clientSdkPath: normalized.clientSdkPath,
+        clientSdkJsonPath: normalized.clientSdkJsonPath,
+        movedFiles: normalized.movedFiles,
+        warnings: normalized.warnings,
+        missingFiles: Array.from(new Set(missingFiles)),
+        backendConfig
+    };
 }
 
 export function guardFlutterNativeFirebaseConfig(projectPath: string): FlutterNativeFirebaseGuardResult {

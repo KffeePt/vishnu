@@ -1,0 +1,32 @@
+---
+name: detailed_instructions
+description: Provides detailed instructions for parameter extraction.
+version: "1.0"
+---
+**Instrucciones Detalladas para la Extracción de Parámetros:**
+1.  **Contexto Completo**: Utiliza la ÚLTIMA consulta del usuario, el historial COMPLETO de la conversación y cualquier CONTEXTO CRÍTICO proporcionado para informar tu extracción.
+2.  **Analiza el Esquema CUIDADOSAMENTE**: Para cada parámetro listado en el 'Esquema de Parámetros de la Herramienta' que te proporcioné antes:
+    *   Presta atención MUY ESPECIAL a la `description` de cada parámetro. Esta descripción es CLAVE y te dice QUÉ información se espera y CÓMO debe ser interpretada o formateada.
+    *   Verifica el `type` (ej: 'string', 'number', 'boolean') y asegúrate de que el valor extraído coincida.
+    *   Identifica si el parámetro es `required: true`.
+3.  **Extracción Basada en Descripción**: Tu objetivo principal es encontrar o inferir valores que satisfagan la `description` de cada parámetro. No te limites a buscar coincidencias exactas de palabras clave; comprende la semántica de la descripción.
+4.  **Parámetros Requeridos**: Si un parámetro es `required: true` y, DESPUÉS de considerar cuidadosamente su `description` y el contexto de la conversación, no puedes encontrar o inferir de manera confiable un valor adecuado, DEBES indicar que falta devolviendo un JSON como: `{"missing_required_parameters": ["nombre_del_parametro_faltante"]}`. No inventes valores para parámetros requeridos si no estás seguro.
+5.  **Parámetros Opcionales**: Si un parámetro no es 'required', solo inclúyelo en tu JSON si encuentras un valor claramente relevante y que coincida con su `description`. Si no, omítelo.
+6.  **Sin Parámetros o Sin Valores**: Si la herramienta no tiene parámetros definidos en su esquema, o si todos los parámetros son opcionales y ninguno se encuentra aplicable (según sus descripciones y el contexto), devuelve un objeto JSON vacío: `{}`.
+
+**Formato de Salida JSON (Obligatorio):**
+- Tu respuesta DEBE SER un único objeto JSON válido en formato string.
+- NO incluyas ningún otro texto, explicaciones, saludos o formato markdown antes o después del objeto JSON.
+- El objeto JSON solo debe contener claves que correspondan a los nombres de los parámetros del esquema.
+
+Ejemplo para una herramienta que requiere 'orderId' (string, description: "El identificador único del pedido") y tiene un parámetro opcional 'reason' (string, description: "La razón específica proporcionada por el usuario para la acción"):
+Consulta del usuario: "Quiero cancelar el pedido 12345 porque cambié de opinión."
+Tu respuesta JSON: {"orderId": "12345", "reason": "Cambié de opinión."}
+
+Consulta del usuario: "Cancelar mi último pedido." (y 'orderId' es requerido pero no se puede inferir)
+Tu respuesta JSON: {"missing_required_parameters": ["orderId"]}
+
+Consulta del usuario: "Cuéntame un chiste." (para una herramienta de chistes sin parámetros)
+Tu respuesta JSON: {}
+
+CRÍTICAMENTE IMPORTANTE: Tu respuesta completa DEBE SER un único objeto JSON válido en formato string. Sin ningún otro texto, sin markdown, sin explicaciones. Solo el JSON.

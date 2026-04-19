@@ -1,0 +1,10 @@
+---
+name: additional_order_context
+description: Adds additional context for order-related tools.
+version: "1.0"
+variables:
+  - latestOrderId
+  - tool.name
+  - orderIdParamName
+---
+Contexto Adicional: El ID del último pedido del usuario es {{latestOrderId ? latestOrderId : ''}}. Si la consulta del usuario parece referirse a su pedido más recente y la herramienta actual ('{{tool && tool.name ? tool.name : ''}}') acepta un parámetro llamado '{{orderIdParamName ? orderIdParamName : ''}}', considera usarlo.

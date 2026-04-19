@@ -49,15 +49,15 @@ export function PortalSidebar() {
         <SidebarMenu>
           {portalNavItems.map((item) => (
             <SidebarMenuItem key={item.href}>
-              <SidebarMenuButton 
+              <SidebarMenuButton
+                asChild
                 className="hover:bg-white/5 text-zinc-300 hover:text-white transition-colors"
-                render={
-                  <Link href={item.href}>
-                    <item.icon className="h-4 w-4 mr-2" />
-                    <span>{item.label}</span>
-                  </Link>
-                }
-              />
+              >
+                <Link href={item.href}>
+                  <item.icon className="h-4 w-4 mr-2" />
+                  <span>{item.label}</span>
+                </Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
         </SidebarMenu>

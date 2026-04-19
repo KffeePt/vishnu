@@ -1,0 +1,67 @@
+---
+name: intent_and_flow
+description: Classifies the user's intent and determines the next flow step.
+version: "1.0"
+variables:
+  - conversationId
+  - userId
+  - currentFlowStep
+  - lastIntentClassification
+  - currentOrderId
+  - detailedHistory
+  - userInput
+  - allIntentNames
+  - allFlowSteps
+---
+Tu tarea principal es analizar el **ÚLTIMO MENSAJE DEL USUARIO** en el contexto de la conversación completa y el paso de flujo actual. Debes clasificar la INTENCIÓN específica de este ÚLTIMO MENSAJE y determinar el SIGUIENTE PASO DEL FLUJO más apropiado.
+
+Contexto de la Conversación Actual:
+- ID de Conversación (interno): {{conversationId}}
+- ID de Usuario (interno): {{userId}}
+- Paso del Flujo Actual de la Conversación (antes de este turno): {{currentFlowStep}}
+- Última Intención Clasificada (del turno anterior del usuario, si existe): {{lastIntentClassification}}
+- ID de Pedido Actual en Contexto (si existe): {{currentOrderId}}
+
+Historial COMPLETO de la Conversación (para tu referencia contextual, el último mensaje es el que debes analizar):
+{{detailedHistory}}
+
+**ÚLTIMO MENSAJE DEL USUARIO (el que debes clasificar AHORA): "{{userInput}}"**
+
+Intenciones Disponibles para Clasificación (debes elegir una de estas para el ÚLTIMO MENSAJE DEL USUARIO):
+[{{allIntentNames}}]
+
+Pasos de Flujo Disponibles para el Siguiente Paso (debes elegir uno de estos como el próximo paso):
+[{{allFlowSteps}}]
+
+Consideraciones CRÍTICAS para determinar el 'nextFlowStep', en orden de precedencia:
+
+1.  **RESPUESTA A PREGUNTA DIRECTA DEL ASISTENTE (Máxima Prioridad Contextual)**:
+    *   Si el ÚLTIMO mensaje en el 'Historial Reciente de la Conversación' fue del ASISTENTE y era una PREGUNTA CLARA solicitando información específica (ej: "¿Cuál es el motivo del reembolso?", "¿Podrías darme el número de pedido?", "¿Qué detalle necesitas aclarar?").
+    *   Y el '**ÚLTIMO MENSAJE DEL USUARIO**' actual (el que estás clasificando) parece ser una RESPUESTA DIRECTA y relevante a esa pregunta específica del asistente.
+    *   ENTONCES:
+        *   La `intentClassification` DEBE ser la misma que `conversationData.lastIntentClassification` (la intención que estaba activa cuando el asistente hizo la pregunta).
+        *   El `nextFlowStep` DEBE ser `RESOLVE_PRESENT` (para permitir que el sistema intente de nuevo la acción original, ahora con la información que el usuario acaba de proporcionar).
+    *   Esta regla (1) es CRUCIAL para mantener el flujo de la conversación cuando el usuario está proporcionando información solicitada. Si se cumplen estas condiciones, esta regla ANULA las siguientes reglas de clasificación general. El objetivo es reconocer que el usuario está continuando con el proceso iniciado.
+
+2.  **FINALIZACIÓN DE CONVERSACIÓN**:
+    *   Si el 'ÚLTIMO MENSAJE DEL USUARIO' indica claramente que no necesita más ayuda o desea terminar la conversación (ejemplos: "no", "eso es todo", "nada más", "gracias, es todo", "adiós").
+    *   Y el 'Paso del Flujo Actual' NO es 'ESCALATION_PROPOSED' (ya que después de proponer escalación, si el usuario no presenta una nueva consulta, el flujo debe ir primero a 'AWAITING_ANYTHING_ELSE').
+    *   ENTONCES: `intentClassification` debe reflejar esta finalización (ej: 'conversation_end_no_further_assistance', 'no_further_questions', 'despedida'), y `nextFlowStep` DEBE SER `RECAP_THANK`.
+
+3.  **MANEJO DEL PASO 'ESCALATION_PROPOSED'**:
+    *   Si el 'Paso del Flujo Actual' es `ESCALATION_PROPOSED`:
+        *   Si el 'ÚLTIMO MENSAJE DEL USUARIO' es una simple confirmación (ej: "ok", "entiendo", "gracias") O NO introduce un problema/pregunta nueva y distinta (y la regla 2 no aplica), ENTONCES `intentClassification` debe ser algo como 'acknowledgment_of_escalation' (o la más adecuada de tu lista para este caso) y `nextFlowStep` DEBE SER `AWAITING_ANYTHING_ELSE`.
+        *   Si el 'ÚLTIMO MENSAJE DEL USUARIO' introduce una PREGUNTA O PROBLEMA NUEVO Y DISTINTO (y las reglas 1 y 2 no aplican), ENTONCES clasifica la nueva intención y el `nextFlowStep` debe ser el apropiado para la nueva solicitud (ej: `DISCOVER_CLARIFY` o `RESOLVE_PRESENT`).
+
+4.  **MANEJO DEL PASO 'AWAITING_ANYTHING_ELSE'**:
+    *   Si el 'Paso del Flujo Actual' es `AWAITING_ANYTHING_ELSE`:
+        *   Si el 'ÚLTIMO MENSAJE DEL USUARIO' indica claramente que no necesita más ayuda (ej: "no", "eso es todo", "nada más gracias") (y las reglas 1 y 2 no aplicaron), ENTONCES `intentClassification` debe reflejar finalización y `nextFlowStep` DEBE SER `RECAP_THANK`.
+        *   Si el 'ÚLTIMO MENSAJE DEL USUARIO' introduce una PREGUNTA O PROBLEMA NUEVO Y DISTINTO (y las reglas 1 y 2 no aplican), ENTONCES clasifica la nueva intención y el `nextFlowStep` debe ser el apropiado para la nueva solicitud (ej: `DISCOVER_CLARIFY` o `RESOLVE_PRESENT`).
+
+5.  **CLASIFICACIÓN GENERAL (POR DEFECTO)**:
+    *   Si ninguna de las reglas anteriores (1-4) aplica, determina la `intentClassification` y el `nextFlowStep` basándote en el contenido del último mensaje del usuario, el contexto de la conversación y las reglas de negocio implícitas en las intenciones disponibles.
+
+Tu respuesta DEBE SER ÚNICAMENTE un objeto JSON válido con dos claves: "intentClassification" y "nextFlowStep".
+Ejemplo de respuesta JSON: {"intentClassification": "Estado de la Orden", "nextFlowStep": "RESOLVE_PRESENT"}
+Ejemplo si el usuario dice "eso sería todo" cuando el paso actual es 'AWAITING_ANYTHING_ELSE': {"intentClassification": "conversation_end_no_further_assistance", "nextFlowStep": "RECAP_THANK"}
+Ejemplo si el paso actual es 'ESCALATION_PROPOSED' y el usuario dice "ok": {"intentClassification": "acknowledgment_of_escalation", "nextFlowStep": "AWAITING_ANYTHING_ELSE"}

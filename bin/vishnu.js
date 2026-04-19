@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
-const updateScript = path.join(projectRoot, 'update.js');
+const updateScript = path.join(projectRoot, 'scripts', 'js', 'update.js');
 
 // Launch the TUI using npx tsx (safer for Windows/Global)
 const cliPath = path.join(projectRoot, 'codeman', 'interactive-cli.ts');

@@ -39,7 +39,10 @@ function pushIfExists(entries: SecretReviewEntry[], filePath: string, label: str
 function collectProjectSecretEntries(projectPath: string): SecretReviewEntry[] {
     const framework = detectFramework(projectPath);
     const entries: SecretReviewEntry[] = [];
-    const secretsDir = path.join(projectPath, '.secrets');
+    const secretsDirs = [
+        path.join(projectPath, '.secrets'),
+        path.join(projectPath, 'scripts', '.secrets')
+    ];
 
     pushIfExists(entries, path.join(projectPath, '.env'), '.env', 'Active project environment values', 'env');
     pushIfExists(entries, path.join(projectPath, '.env.example'), '.env.example', 'Template environment file', 'env');
@@ -48,9 +51,15 @@ function collectProjectSecretEntries(projectPath: string): SecretReviewEntry[] {
         pushIfExists(entries, path.join(projectPath, '.env.local'), '.env.local', 'Next.js local runtime environment', 'env');
     }
 
-    if (fs.existsSync(secretsDir)) {
+    for (const secretsDir of secretsDirs) {
+        if (!fs.existsSync(secretsDir)) {
+            continue;
+        }
+
+        const relativeSecretsDir = path.relative(projectPath, secretsDir).replace(/\\/g, '/');
         const preferredOrder = [
             'admin-sdk.json',
+            'app-check.json',
             'firebase-sdk.js',
             'firebase-sdk.json',
             'client-secret-oauth.json',
@@ -63,7 +72,7 @@ function collectProjectSecretEntries(projectPath: string): SecretReviewEntry[] {
             if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
             seen.add(fullPath.toLowerCase());
             entries.push({
-                label: formatSecretLabel(fileName),
+                label: formatSecretLabel(fileName, relativeSecretsDir),
                 description: describeSecretFile(fileName, framework),
                 filePath: fullPath,
                 category: 'secret'
@@ -79,7 +88,7 @@ function collectProjectSecretEntries(projectPath: string): SecretReviewEntry[] {
         for (const extraPath of extraFiles) {
             const fileName = path.basename(extraPath);
             entries.push({
-                label: formatSecretLabel(fileName),
+                label: formatSecretLabel(fileName, relativeSecretsDir),
                 description: describeSecretFile(fileName, framework),
                 filePath: extraPath,
                 category: 'secret'
@@ -90,12 +99,12 @@ function collectProjectSecretEntries(projectPath: string): SecretReviewEntry[] {
     return entries;
 }
 
-function formatSecretLabel(fileName: string): string {
+function formatSecretLabel(fileName: string, secretsDir = '.secrets'): string {
     if (fileName === 'firebase-sdk.json') {
-        return '.secrets/firebase-sdk.json (generated from firebase-sdk.js)';
+        return `${secretsDir}/firebase-sdk.json (generated from firebase-sdk.js)`;
     }
 
-    return `.secrets/${fileName}`;
+    return `${secretsDir}/${fileName}`;
 }
 
 function describeSecretFile(fileName: string, framework: 'flutter' | 'nextjs' | 'custom'): string {
@@ -110,6 +119,8 @@ function describeSecretFile(fileName: string, framework: 'flutter' | 'nextjs' | 
                 : 'Generated readable Firebase web config for Flutter/web, derived from firebase-sdk.js';
         case 'client-secret-oauth.json':
             return 'Google OAuth client export used for Google Sign-In';
+        case 'app-check.json':
+            return 'Firebase App Check configuration payload';
         case 'stripe.json':
             return 'Local Stripe onboarding / account bootstrap payload';
         default:
@@ -190,7 +201,7 @@ export async function runSecretsManager(projectPath: string): Promise<void> {
 
         if (entries.length === 0) {
             console.log(chalk.yellow('\nNo secret or env files were found for this project yet.'));
-            console.log(chalk.gray('Expected sources include .env, .env.example, .env.local, and files inside .secrets/.'));
+            console.log(chalk.gray('Expected sources include .env, .env.example, .env.local, and files inside .secrets/ or scripts/.secrets/.'));
             const inquirer = (await import('inquirer')).default;
             await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
             return;

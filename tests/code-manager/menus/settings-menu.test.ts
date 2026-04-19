@@ -22,7 +22,9 @@ describe('Settings menu launcher integration', () => {
         const getOptions = SettingsMenuDef.options as (state: any) => Promise<Array<{ value: string; action?: { handler?: string } }>>;
         const options = await getOptions({ project: { rootPath: '' } });
         const sessionTimers = options.find((option) => option.value === 'session-timers');
+        const back = options.find((option) => option.value === 'back');
 
         expect(sessionTimers?.action?.handler).toBe('viewSessionTimers');
+        expect(back?.action?.handler).toBe('returnToLauncherFromSettings');
     });
 });

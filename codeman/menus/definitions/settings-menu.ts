@@ -13,6 +13,11 @@ export const SettingsMenuDef: MenuDefinition = {
                 action: { type: 'navigate', target: 'update-menu' }
             },
             {
+                label: '📦 Update Vishnu Stable Release',
+                value: 'update-vishnu-stable',
+                action: { type: 'script', handler: 'updateVishnuStable' }
+            },
+            {
                 label: '🔑 Manage Gemini API Keys',
                 value: 'sys-gemini',
                 action: { type: 'script', handler: 'manageGeminiKeys' }
@@ -43,7 +48,7 @@ export const SettingsMenuDef: MenuDefinition = {
         options.push({
             label: '⬅️  Back',
             value: 'back',
-            action: { type: 'back' }
+            action: { type: 'script', handler: 'returnToLauncherFromSettings' }
         });
 
         return options;

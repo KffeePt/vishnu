@@ -1,0 +1,36 @@
+{
+  "plugins": [
+    {
+      "name": "SansanMode",
+      "path": "./sansan-mode-plugin",
+      "activation": {
+        "keybind": ["shift", "e", "x"]
+      },
+      "contextType": "2d"
+    },
+    {
+      "name": "FluidSimulation",
+      "path": "./fluid-simulation-plugin",
+      "activation": {
+        "keybind": ["shift", "f"]
+      },
+      "contextType": "webgl2"
+    },
+    {
+      "name": "GravityMode",
+      "path": "./gravity-mode-plugin",
+      "activation": {
+        "keybind": ["shift", "g"]
+      },
+      "contextType": "2d"
+    },
+    {
+      "name": "WebGLFluid",
+      "path": "./webgl-fluid-plugin",
+      "activation": {
+        "keybind": ["shift", "w"]
+      },
+      "contextType": "webgl2"
+    }
+  ]
+}

@@ -53,7 +53,7 @@ export const MaintenanceMenuDef: MenuDefinition = {
 
         opts.push({ label: '--- Admin Tools ---', value: 'sep3', type: 'separator' });
         opts.push({
-            label: '👑 Set User Claims (TUI) [New Window]',
+            label: '👑 Vishnu Global Claims',
             value: 'set-claims',
             action: { type: 'script', handler: 'maintSetClaims' }
         });
@@ -66,6 +66,11 @@ export const MaintenanceMenuDef: MenuDefinition = {
             label: '🔥 Setup Firebase Config (For User Dev Projects)',
             value: 'setup-firebase',
             action: { type: 'script', handler: 'maintSetupFirebase' }
+        });
+        opts.push({
+            label: '🔄 Migrate Vishnu Backend Credentials',
+            value: 'migrate-vishnu-backend',
+            action: { type: 'script', handler: 'maintMigrateVishnuBackend' }
         });
         opts.push({
             label: '⏱️  Edit Global Session Timers',

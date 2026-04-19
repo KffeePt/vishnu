@@ -807,11 +807,21 @@ function purgeFirebaseArtifacts(projectPath: string): { removedFiles: string[]; 
 
     const credentialFiles = [
         path.join(projectPath, '.secrets', 'admin-sdk.json'),
+        path.join(projectPath, '.secrets', 'app-check.json'),
+        path.join(projectPath, '.secrets', 'stripe.json'),
         path.join(projectPath, '.secrets', 'firebase-sdk.js'),
         path.join(projectPath, '.secrets', 'firebase-sdk.json'),
         path.join(projectPath, '.secrets', 'client-secret-oauth.json'),
         path.join(projectPath, '.secrets', 'client_secret_oauth.json'),
         path.join(projectPath, '.secrets', 'client_secret.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'admin-sdk.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'app-check.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'stripe.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'firebase-sdk.js'),
+        path.join(projectPath, 'scripts', '.secrets', 'firebase-sdk.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'client-secret-oauth.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'client_secret_oauth.json'),
+        path.join(projectPath, 'scripts', '.secrets', 'client_secret.json'),
         path.join(projectPath, 'admin-sdk.json'),
         path.join(projectPath, 'firebase-sdk.js'),
         path.join(projectPath, 'firebase-sdk.json'),
@@ -924,11 +934,12 @@ export async function runEnvMigrationPrompt(projectPath: string): Promise<void> 
     const framework = detectFramework(projectPath);
     let summary = buildMismatchSummary(projectPath, framework);
 
+    if (isMismatchResolved(summary)) {
+        return;
+    }
+
     while (true) {
         printMismatchSummary(projectPath, framework, summary);
-        if (isMismatchResolved(summary)) {
-            console.log(chalk.gray('\nNo blocking mismatches detected. Leave as is is safe if you just want to continue.'));
-        }
 
         const choice = await List('What would you like to do?', [
             { name: 'Leave as is', value: 'skip' },
@@ -943,6 +954,10 @@ export async function runEnvMigrationPrompt(projectPath: string): Promise<void> 
 
         if (choice === 'visualize') {
             await runMismatchReviewPrompt(projectPath, framework, summary);
+            summary = buildMismatchSummary(projectPath, framework);
+            if (isMismatchResolved(summary)) {
+                return;
+            }
             continue;
         }
 

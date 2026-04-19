@@ -44,9 +44,68 @@ if (!admin.apps.length) {
 }
 const GITHUB_APP_ID = (0, params_1.defineSecret)('GITHUB_APP_ID');
 const GITHUB_APP_PRIVATE_KEY = (0, params_1.defineSecret)('GITHUB_APP_PRIVATE_KEY');
+function inferAccessRole(claims) {
+    if (claims.owner === true || claims.owner === 'master' || claims.role === 'owner') {
+        return 'owner';
+    }
+    if (claims.admin === true || claims.role === 'admin') {
+        return 'admin';
+    }
+    if (claims.role === 'maintainer') {
+        return 'maintainer';
+    }
+    if (claims.staff === true || claims.role === 'staff') {
+        return 'staff';
+    }
+    if (claims.dev === true || claims.role === 'dev') {
+        return 'dev';
+    }
+    const role = typeof claims.role === 'string' ? claims.role.trim() : '';
+    if (role === 'projectManager' || role === 'senior' || role === 'junior' || role === 'partner' || role === 'user') {
+        return role;
+    }
+    return null;
+}
+function buildManagedClaimsForRole(role) {
+    switch (role) {
+        case 'owner':
+            return { role: 'owner', owner: true, admin: true, user: true };
+        case 'admin':
+            return { role: 'admin', admin: true, user: true };
+        case 'maintainer':
+            return { role: 'maintainer', user: true };
+        case 'staff':
+            return { role: 'staff', staff: true, user: true };
+        case 'dev':
+            return { role: 'dev', dev: true, user: true };
+        case 'projectManager':
+        case 'senior':
+        case 'junior':
+        case 'partner':
+        case 'user':
+            return { role, user: true };
+        default:
+            return {};
+    }
+}
+function stripManagedClaims(claims) {
+    const next = Object.assign({}, claims);
+    for (const key of [
+        'role',
+        'owner',
+        'admin',
+        'maintainer',
+        'staff',
+        'dev',
+        'user'
+    ]) {
+        delete next[key];
+    }
+    return next;
+}
 /**
  * Cloud Function: verifyAccess
- * Validates a user's GitHub role (from custom claims) to authorize CLI TUI access.
+ * Validates a user's current access claims to authorize Codeman/Vishnu tooling access.
  */
 exports.verifyAccess = functions.https.onCall(async (data, context) => {
     // 1. Ensure user is authenticated via Firebase Auth
@@ -58,20 +117,20 @@ exports.verifyAccess = functions.https.onCall(async (data, context) => {
         // 2. Retrieve user record
         const userRecord = await admin.auth().getUser(uid);
         const claims = userRecord.customClaims || {};
-        // Custom claims check
-        const role = claims.role;
-        // Valid roles for TUI access
-        if (role === 'admin' || role === 'maintainer' || role === 'staff') {
+        const role = inferAccessRole(claims);
+        if (role) {
             return {
                 authorized: true,
-                role: role,
-                message: 'Access Granted'
+                role,
+                claims,
+                message: 'Access granted.'
             };
         }
         return {
             authorized: false,
-            role: role || 'none',
-            message: 'Insufficient permissions. You must be an admin, maintainer, or staff member.'
+            role: 'none',
+            claims,
+            message: 'Insufficient permissions. No supported Vishnu access role is assigned.'
         };
     }
     catch (error) {
@@ -104,7 +163,7 @@ exports.syncClaims = functions
         // We check the user's role in the primary org (KffeePt for Vishnu)
         const ORG_NAME = 'KffeePt';
         const role = await (0, github_app_1.getUserOrgRole)(token, ORG_NAME, githubUsername);
-        let newRole = 'none';
+        let newRole = null;
         if (role === 'admin') {
             newRole = 'admin';
         }
@@ -115,9 +174,10 @@ exports.syncClaims = functions
         if (githubUsername.toLowerCase() === 'santi') {
             newRole = 'owner';
         }
-        // Set Custom Claim
-        await admin.auth().setCustomUserClaims(uid, { role: newRole });
-        return { success: true, newRole };
+        const userRecord = await admin.auth().getUser(uid);
+        const preservedClaims = stripManagedClaims(userRecord.customClaims || {});
+        await admin.auth().setCustomUserClaims(uid, Object.assign(Object.assign({}, preservedClaims), buildManagedClaimsForRole(newRole)));
+        return { success: true, newRole: newRole || 'none' };
     }
     catch (error) {
         console.error('Error syncing claims:', error);

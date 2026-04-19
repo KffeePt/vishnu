@@ -56,6 +56,16 @@ export const DevOpsMenuDef: MenuDefinition = {
                 label: '🌐 Run Web App',
                 value: 'run-web',
                 action: { type: 'script', handler: 'runWeb' }
+            },
+            {
+                label: '👤 Project Claims',
+                value: 'project-set-claims',
+                action: { type: 'script', handler: 'project-set-claims' }
+            },
+            {
+                label: '🔐 Manage Secrets',
+                value: 'manage-secrets',
+                action: { type: 'script', handler: 'manage-secrets' }
             }
         );
 

@@ -10,6 +10,8 @@ import { guardFlutterNativeFirebaseConfig } from '../core/project/firebase-crede
 import * as net from 'net'; // NEW
 
 export class BuildManager {
+    private static readonly webServerPort = 3000;
+
     private static ensureFlutterNativeFirebaseReady(projectRoot: string): void {
         const pubspecPath = path.join(projectRoot, 'pubspec.yaml');
         if (!fs.existsSync(pubspecPath)) {
@@ -114,17 +116,17 @@ export class BuildManager {
     }
 
     private static async ensureWebServer(projectRoot: string, logDir: string, globalLog?: string): Promise<any | null> {
-        if (await this.checkPort(8081)) {
-            console.log(chalk.green('   > Web Server already running on port 8081.'));
+        if (await this.checkPort(this.webServerPort)) {
+            console.log(chalk.green(`   > Web Server already running on port ${this.webServerPort}.`));
             return null; // Already running
         }
 
-        console.log(chalk.yellow('   > Starting Flutter Web Server on port 8081...'));
+        console.log(chalk.yellow(`   > Starting Flutter Web Server on port ${this.webServerPort}...`));
         const logPath = path.join(logDir, 'web_server.log');
         const logStream = fs.createWriteStream(logPath, { flags: 'a' });
         const globalLogStream = globalLog ? fs.createWriteStream(globalLog, { flags: 'a' }) : null;
 
-        const child = spawn('flutter', ['run', '-d', 'web-server', '--web-port', '8081'], {
+        const child = spawn('flutter', ['run', '-d', 'web-server', '--web-port', String(this.webServerPort)], {
             cwd: projectRoot,
             shell: true,
             stdio: ['ignore', 'pipe', 'pipe']
@@ -145,7 +147,7 @@ export class BuildManager {
                 logStream.write(s);
                 if (globalLogStream) globalLogStream.write(s);
                 // Check for readiness
-                if (s.includes('served at') || s.includes('localhost:8081')) {
+                if (s.includes('served at') || s.includes(`localhost:${this.webServerPort}`)) {
                     if (!ready) {
                         ready = true;
                         clearTimeout(timeout);
@@ -172,7 +174,7 @@ export class BuildManager {
         console.log(`Logs: ${logDir}`);
 
         // 1. Acquire Lock
-        if (!await LockManager.acquire(projectRoot, '.build_lock')) {
+        if (!await LockManager.acquire(projectRoot, '.build_lock', { allowSteal: true })) {
             console.log(chalk.red('Failed to acquire lock.'));
             return;
         }
@@ -264,7 +266,7 @@ export class BuildManager {
         const logsSubDir = path.join(logDir, 'logs');
         await fs.ensureDir(logsSubDir);
 
-        if (!await LockManager.acquire(projectRoot, '.tests_lock')) return false;
+        if (!await LockManager.acquire(projectRoot, '.tests_lock', { allowSteal: true })) return false;
 
         let overallSuccess = true;
         try {
@@ -625,7 +627,7 @@ export class BuildManager {
             const browserDevices = devices.filter(device => this.isBrowserWebDevice(device));
             const choices = [
                 {
-                    name: 'Localhost dev server (web-server, port 8080)',
+                    name: `Localhost dev server (web-server, port ${this.webServerPort})`,
                     value: 'web-server'
                 },
                 ...browserDevices.map(device => ({
@@ -712,11 +714,11 @@ export class BuildManager {
 
         // Construct the flutter command
         const flutterCmd = resolvedTarget === 'web-server'
-            ? 'flutter run -d web-server --web-port=8080'
+            ? `flutter run -d web-server --web-port=${this.webServerPort}`
             : `flutter run -d ${resolvedTarget}`;
 
         if (resolvedTarget === 'web-server') {
-            console.log(chalk.yellow('   > Launching Flutter web server at http://localhost:8080 ...'));
+            console.log(chalk.yellow(`   > Launching Flutter web server at http://localhost:${this.webServerPort} ...`));
         }
 
         if (process.platform === 'win32') {

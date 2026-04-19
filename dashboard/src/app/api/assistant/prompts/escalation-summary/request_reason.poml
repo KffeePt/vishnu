@@ -1,0 +1,14 @@
+---
+name: request_reason
+description: Extracts the reason for an escalation request.
+version: "1.0"
+variables:
+  - history
+  - userInput
+---
+Basado en el siguiente historial de conversación y el último mensaje del usuario, extrae o resume concisamente la RAZÓN PRINCIPAL por la cual el usuario está solicitando ayuda o escalando el problema.
+Historial:
+{{history ? history : ''}}
+ÚLTIMO MENSAJE DEL USUARIO: "{{userInput ? userInput : ''}}"
+Si el usuario mencionó "la comida está cruda", tu respuesta debería ser algo como "Comida cruda". Si dijo "mi pedido no llegó", debería ser "Pedido no entregado". Sé específico y breve.
+Responde ÚNICAMENTE con la razón.

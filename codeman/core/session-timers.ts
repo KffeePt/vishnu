@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { UserConfigManager } from '../config/user-config';
 import { AuthTokenStore } from './auth/token-store';
 import { state } from './state';
+import { resolveFirebaseBackendConfig } from './project/firebase-credentials';
 
 export interface SessionTimerConfig {
     projectInactivityMs: number;
@@ -37,6 +38,7 @@ export interface SessionTimerValidationIssue {
 
 export interface SessionPresenceRecord {
     sessionId: string;
+    machineId?: string;
     terminalId?: string;
     terminalLabel?: string;
     projectPath?: string;
@@ -50,18 +52,26 @@ export interface SessionPresenceRecord {
     source: 'local' | 'remote';
 }
 
+export interface SessionPresenceAnalysis {
+    sessions: SessionPresenceRecord[];
+    removals: string[];
+    totalCount: number;
+    expiredCount: number;
+}
+
 const APP_NAME = 'vishnu-session-timers';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const VISHNU_ROOT = path.resolve(__dirname, '..', '..');
-const DEFAULT_BACKEND_PROJECT_ID = 'vishnu-b65bd';
-const DEFAULT_BACKEND_DATABASE_URL = 'https://vishnu-b65bd-default-rtdb.firebaseio.com/';
-const CACHE_FILE = path.join(os.homedir(), '.vishnu', 'session-timers.json');
+const VISHNU_ROOT = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : path.resolve(__dirname, '..', '..');
+const CACHE_DIR = path.join(os.homedir(), '.vishnu');
+const CACHE_FILE = path.join(CACHE_DIR, 'session-timers.json');
+const MACHINE_ID_FILE = path.join(CACHE_DIR, 'machine-id');
 const DEFAULT_RTDP_PATH = 'system/sessionTimers';
 const DEFAULT_FIRESTORE_DOC = 'system/sessionTimers';
 const DEFAULT_ACTIVE_SESSIONS_PATH = 'system/activeSessions';
 const MAX_ACTIVE_TERMINALS = 5;
 const MIN_DURATION_MS = 59 * 1000;
+const STALE_SESSION_GRACE_MS = 60 * 1000;
 
 const DEFAULT_SESSION_TIMERS: SessionTimerConfig = {
     projectInactivityMs: 60 * 60 * 1000,
@@ -88,12 +98,12 @@ let presenceTerminalLabel: string | null = null;
 let presenceHeartbeat: NodeJS.Timeout | null = null;
 let presenceContext: { projectPath?: string; projectId?: string; userEmail?: string; uid?: string } | null = null;
 let syncActive = false;
+let cachedMachineId: string | null = null;
 const emitter = new EventEmitter();
 
 function ensureCacheDir() {
-    const dir = path.dirname(CACHE_FILE);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(CACHE_DIR)) {
+        fs.mkdirSync(CACHE_DIR, { recursive: true });
     }
 }
 
@@ -247,33 +257,117 @@ function resolveBackendServiceAccountPath(rawPath?: string): string {
 }
 
 function getBackendConnection() {
-    const rawProjectId = (process.env.VISHNU_SESSION_BACKEND_PROJECT_ID || DEFAULT_BACKEND_PROJECT_ID).trim();
-    const rawDatabaseUrl = (process.env.VISHNU_SESSION_BACKEND_DATABASE_URL || DEFAULT_BACKEND_DATABASE_URL).trim();
-    const rawServiceAccountPath = process.env.VISHNU_SESSION_BACKEND_ADMIN_SDK;
+    const inferredBackend = resolveFirebaseBackendConfig(VISHNU_ROOT);
+    const rawProjectId = (process.env.VISHNU_SESSION_BACKEND_PROJECT_ID || inferredBackend?.projectId || '').trim();
+    const rawDatabaseUrl = (process.env.VISHNU_SESSION_BACKEND_DATABASE_URL || inferredBackend?.databaseURL || '').trim();
+    const rawServiceAccountPath = process.env.VISHNU_SESSION_BACKEND_ADMIN_SDK || inferredBackend?.serviceAccountPath;
 
     return {
-        projectId: rawProjectId || DEFAULT_BACKEND_PROJECT_ID,
-        databaseURL: rawDatabaseUrl || DEFAULT_BACKEND_DATABASE_URL,
+        projectId: rawProjectId || inferredBackend?.projectId || '',
+        databaseURL: rawDatabaseUrl || inferredBackend?.databaseURL || '',
         serviceAccountPath: resolveBackendServiceAccountPath(rawServiceAccountPath)
     };
 }
 
-function normalizeSessionPresence(raw: unknown): SessionPresenceRecord[] {
-    if (!raw) return [];
+function getMachineId(): string {
+    if (cachedMachineId) {
+        return cachedMachineId;
+    }
+
+    ensureCacheDir();
+    try {
+        if (fs.existsSync(MACHINE_ID_FILE)) {
+            const existing = fs.readFileSync(MACHINE_ID_FILE, 'utf-8').trim();
+            if (existing) {
+                cachedMachineId = existing;
+                return existing;
+            }
+        }
+    } catch { }
+
+    cachedMachineId = cryptoSafeRandomId();
+    fs.writeFileSync(MACHINE_ID_FILE, `${cachedMachineId}\n`);
+    return cachedMachineId;
+}
+
+function normalizePresenceSubject(record: SessionPresenceRecord): string {
+    if (typeof record.uid === 'string' && record.uid.trim()) {
+        return record.uid.trim();
+    }
+
+    if (typeof record.userEmail === 'string' && record.userEmail.trim()) {
+        return record.userEmail.trim().toLowerCase();
+    }
+
+    return '';
+}
+
+function normalizePresenceProject(record: SessionPresenceRecord): string {
+    if (typeof record.projectId === 'string' && record.projectId.trim()) {
+        return record.projectId.trim().toLowerCase();
+    }
+
+    if (typeof record.projectPath === 'string' && record.projectPath.trim()) {
+        return record.projectPath.trim().toLowerCase();
+    }
+
+    return '';
+}
+
+function buildTerminalPresenceKey(record: SessionPresenceRecord): string {
+    const subject = normalizePresenceSubject(record);
+    const project = normalizePresenceProject(record);
+    const machine = typeof record.machineId === 'string' && record.machineId.trim()
+        ? record.machineId.trim()
+        : 'legacy';
+
+    if (subject && project) {
+        return `${machine}|${subject}|${project}`;
+    }
+
+    if (typeof record.terminalId === 'string' && record.terminalId.trim()) {
+        return `terminal:${record.terminalId.trim()}`;
+    }
+
+    return `session:${record.sessionId}`;
+}
+
+export function analyzeSessionPresence(raw: unknown, options?: {
+    now?: number;
+    inactivityMs?: number;
+    maxActiveTerminals?: number;
+}): SessionPresenceAnalysis {
+    if (!raw) {
+        return {
+            sessions: [],
+            removals: [],
+            totalCount: 0,
+            expiredCount: 0
+        };
+    }
     const values = Array.isArray(raw) ? raw : Object.entries(raw as Record<string, unknown>).map(([sessionId, value]) => ({ sessionId, ...(value as Record<string, unknown>) }));
-    const now = Date.now();
+    const now = options?.now ?? Date.now();
+    const inactivityMs = options?.inactivityMs ?? currentConfig.projectInactivityMs;
+    const maxActiveTerminals = options?.maxActiveTerminals ?? MAX_ACTIVE_TERMINALS;
+    const removals = new Set<string>();
+    let expiredCount = 0;
 
     const normalized = values.map((item: any) => {
         const sessionId = String(item.sessionId || item.id || item.key || cryptoSafeRandomId());
         const startedAt = typeof item.startedAt === 'number' ? item.startedAt : now;
         const lastSeenAt = typeof item.lastSeenAt === 'number' ? item.lastSeenAt : startedAt;
-        const expiresAt = typeof item.expiresAt === 'number' ? item.expiresAt : now;
-        const status = item.status === 'idle' || item.status === 'expired' ? item.status : (expiresAt > now ? 'active' : 'expired');
+        const expiresAt = typeof item.expiresAt === 'number' ? item.expiresAt : (lastSeenAt + inactivityMs);
+        const isExpired = expiresAt <= now;
+        const status = item.status === 'idle'
+            ? 'idle'
+            : (item.status === 'expired' || isExpired ? 'expired' : 'active');
+        const machineId = typeof item.machineId === 'string' && item.machineId.trim() ? item.machineId.trim() : undefined;
         const terminalId = typeof item.terminalId === 'string' && item.terminalId.trim() ? item.terminalId.trim() : sessionId;
         const terminalLabel = typeof item.terminalLabel === 'string' && item.terminalLabel.trim() ? item.terminalLabel.trim() : undefined;
 
         return {
             sessionId,
+            machineId,
             terminalId,
             terminalLabel,
             projectPath: typeof item.projectPath === 'string' ? item.projectPath : undefined,
@@ -290,14 +384,62 @@ function normalizeSessionPresence(raw: unknown): SessionPresenceRecord[] {
 
     const deduped = new Map<string, SessionPresenceRecord>();
     for (const item of normalized) {
-        const key = item.terminalId || item.sessionId;
+        const staleByLastSeen = now - item.lastSeenAt > inactivityMs + STALE_SESSION_GRACE_MS;
+        const staleByExpiry = now > item.expiresAt + STALE_SESSION_GRACE_MS;
+        if (item.status === 'expired' || staleByLastSeen || staleByExpiry) {
+            removals.add(item.sessionId);
+            expiredCount++;
+            continue;
+        }
+
+        const key = buildTerminalPresenceKey(item);
         const current = deduped.get(key);
-        if (!current || item.lastSeenAt >= current.lastSeenAt) {
+        if (!current) {
             deduped.set(key, item);
+            continue;
+        }
+
+        if (item.lastSeenAt >= current.lastSeenAt) {
+            removals.add(current.sessionId);
+            deduped.set(key, item);
+        } else {
+            removals.add(item.sessionId);
         }
     }
 
-    return Array.from(deduped.values()).sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+    const sessions = Array.from(deduped.values()).sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+    if (sessions.length > maxActiveTerminals) {
+        for (const extra of sessions.slice(maxActiveTerminals)) {
+            removals.add(extra.sessionId);
+        }
+    }
+
+    return {
+        sessions: sessions.slice(0, maxActiveTerminals),
+        removals: Array.from(removals),
+        totalCount: normalized.length,
+        expiredCount
+    };
+}
+
+function normalizeSessionPresence(raw: unknown): SessionPresenceRecord[] {
+    return analyzeSessionPresence(raw).sessions;
+}
+
+async function pruneRemoteSessionPresence(app: admin.app.App, raw: unknown): Promise<SessionPresenceAnalysis> {
+    const analysis = analyzeSessionPresence(raw);
+    if (analysis.removals.length === 0) {
+        return analysis;
+    }
+
+    const { activeSessionsPath } = getRemotePaths();
+    const updates: Record<string, null> = {};
+    for (const sessionId of analysis.removals) {
+        updates[`${activeSessionsPath}/${sessionId}`] = null;
+    }
+
+    await app.database().ref().update(updates);
+    return analysis;
 }
 
 function cryptoSafeRandomId(): string {
@@ -313,6 +455,7 @@ function normalizePresencePayload(input: Partial<SessionPresenceRecord>): Sessio
     const sessionId = input.sessionId || presenceSessionId || cryptoSafeRandomId();
     return {
         sessionId,
+        machineId: input.machineId || getMachineId(),
         terminalId: input.terminalId || presenceTerminalId || sessionId,
         terminalLabel: input.terminalLabel || presenceTerminalLabel || undefined,
         projectPath: input.projectPath,
@@ -328,7 +471,9 @@ function normalizePresencePayload(input: Partial<SessionPresenceRecord>): Sessio
 }
 
 function getTerminalIdentity() {
+    const machineId = getMachineId();
     const signatureParts = [
+        machineId,
         process.env.WT_SESSION,
         process.env.WT_WINDOWID,
         process.env.TERM_SESSION_ID,
@@ -337,11 +482,10 @@ function getTerminalIdentity() {
         process.env.ConEmuPID,
         process.env.TERM_PROGRAM,
         process.env.TERM_PROGRAM_VERSION,
-        process.env.TERM,
-        process.ppid ? String(process.ppid) : ''
+        process.env.TERM
     ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
-    const signature = signatureParts.join('|') || `${process.pid}|${process.ppid}`;
+    const signature = signatureParts.join('|') || machineId;
     const terminalId = `terminal-${createHash('sha256').update(signature).digest('hex').slice(0, 16)}`;
     const labelParts = [
         process.env.WT_SESSION ? `WT:${process.env.WT_SESSION.slice(0, 8)}` : undefined,
@@ -352,6 +496,7 @@ function getTerminalIdentity() {
     ].filter((value): value is string => !!value);
 
     return {
+        machineId,
         terminalId,
         terminalLabel: labelParts.join(' • ') || `ppid:${process.ppid}`
     };
@@ -506,7 +651,10 @@ export const SessionTimerManager = {
     },
 
     getActiveSessions(): SessionPresenceRecord[] {
-        return activeSessionsCache.map(item => ({ ...item }));
+        const now = Date.now();
+        return activeSessionsCache
+            .filter((item) => item.expiresAt > now && item.status !== 'expired')
+            .map(item => ({ ...item }));
     },
 
     getTimerValidationIssues(): SessionTimerValidationIssue[] {
@@ -558,8 +706,15 @@ export const SessionTimerManager = {
 
         activeSessionsRef = sessionsRef;
         activeSessionsListener = (snap: admin.database.DataSnapshot) => {
-            activeSessionsCache = normalizeSessionPresence(snap.val());
+            const raw = snap.val();
+            const analysis = analyzeSessionPresence(raw);
+            activeSessionsCache = analysis.sessions;
             emitter.emit('change', { ...currentConfig });
+            if (analysis.removals.length > 0) {
+                void pruneRemoteSessionPresence(app, raw).catch((error: any) => {
+                    console.log(chalk.yellow(`⚠️  Failed to prune stale sessions: ${error?.message || error}`));
+                });
+            }
         };
         sessionsRef.on('value', activeSessionsListener, (error) => {
             console.log(chalk.yellow(`⚠️  Active session sync error: ${error.message}`));
@@ -611,7 +766,9 @@ export const SessionTimerManager = {
             } else {
                 setTimerValidationIssues([]);
             }
-            activeSessionsCache = normalizeSessionPresence(sessionsSnap.val());
+            const rawSessions = sessionsSnap.val();
+            const analysis = await pruneRemoteSessionPresence(app, rawSessions);
+            activeSessionsCache = analysis.sessions;
         } catch (error: any) {
             console.log(chalk.yellow(`⚠️  Failed to refresh timers from RTDB: ${error?.message || error}`));
         }
@@ -713,6 +870,9 @@ export const SessionTimerManager = {
 
         const { activeSessionsPath } = getRemotePaths();
         const terminal = getTerminalIdentity();
+        const rawSessions = (await app.database().ref(activeSessionsPath).once('value')).val();
+        const analysis = await pruneRemoteSessionPresence(app, rawSessions);
+        activeSessionsCache = analysis.sessions;
         presenceSessionId = terminal.terminalId;
         presenceTerminalId = terminal.terminalId;
         presenceTerminalLabel = terminal.terminalLabel;
@@ -742,6 +902,7 @@ export const SessionTimerManager = {
 
         const payload = normalizePresencePayload({
             sessionId: presenceSessionId,
+            machineId: terminal.machineId,
             terminalId: presenceTerminalId,
             terminalLabel: presenceTerminalLabel,
             projectPath: presenceContext.projectPath,
@@ -766,6 +927,11 @@ export const SessionTimerManager = {
         };
 
         await writeHeartbeat();
+        activeSessionsCache = [
+            payload,
+            ...activeSessionsCache.filter((session) => session.sessionId !== payload.sessionId)
+        ];
+        emitter.emit('change', { ...currentConfig });
         if (presenceHeartbeat) clearInterval(presenceHeartbeat);
         presenceHeartbeat = setInterval(() => {
             void writeHeartbeat().catch(() => { });
@@ -781,6 +947,8 @@ export const SessionTimerManager = {
         presenceHeartbeat = null;
 
         if (presenceSessionId) {
+            activeSessionsCache = activeSessionsCache.filter((session) => session.sessionId !== presenceSessionId);
+            emitter.emit('change', { ...currentConfig });
             try {
                 const app = await ensureTimerApp();
                 if (app) {

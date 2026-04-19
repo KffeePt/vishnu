@@ -1,45 +1,61 @@
 import { MenuDefinition, MenuOption } from '../../schemas/menu-schema';
 import { GlobalState } from '../../core/state';
 
-export const DeploymentMenuDef: MenuDefinition = {
-    id: 'deployment-menu',
-    title: '🚀 Deployment & Release Center',
-    type: 'static',
-    options: [
+export const getDeploymentMenuOptions = async (state: GlobalState): Promise<MenuOption[]> => {
+    const projectType = state.project.type;
+    const options: MenuOption[] = [
         {
-            label: '🚀 Run Full Deployment (Build All + Release + Deploy)',
+            label: '🚀 Run Release Pipeline (Build + Tag + GitHub Release)',
             value: 'run-release',
             action: { type: 'script', handler: 'runRelease', args: { clear: true } }
-        },
-        { label: '--- Platform Specific Deployments ---', value: 'sep1', type: 'separator' },
-        {
-            label: '📱 Deploy APK (Android) -> Release',
-            value: 'deploy-android',
-            action: { type: 'script', handler: 'deployAndroid' }
-        },
-        {
-            label: '🖥️  Deploy Windows (Setup.exe) -> Release',
-            value: 'deploy-windows',
-            action: { type: 'script', handler: 'deployWindows' }
-        },
-        {
-            label: '🍎 Deploy Mac (DMG) -> Release',
-            value: 'deploy-mac',
-            action: { type: 'script', handler: 'deployMac' },
-            disabled: () => process.platform !== 'darwin'
-        },
-        {
-            label: '📲 Deploy iOS (IPA) -> Release',
-            value: 'deploy-ios',
-            action: { type: 'script', handler: 'deployIos' },
-            disabled: () => process.platform !== 'darwin'
-        },
-        {
-            label: '🌐 Deploy Web (Firebase Hosting)',
-            value: 'deploy-web',
-            action: { type: 'script', handler: 'deployWebOnly' }
-        },
-        { label: '--- Management & Monitoring ---', value: 'sep2', type: 'separator' },
+        }
+    ];
+
+    options.push({ label: '--- Platform Deploy Targets ---', value: 'sep-platforms', type: 'separator' });
+
+    if (projectType === 'flutter') {
+        options.push(
+            {
+                label: '🌐 Deploy Web App (Firebase Hosting)',
+                value: 'deploy-web',
+                action: { type: 'script', handler: 'deployWebOnly' }
+            },
+            {
+                label: '🤖 Deploy Android App (Google Play) [Coming Soon]',
+                value: 'deploy-android',
+                action: { type: 'script', handler: 'deployAndroid' }
+            },
+            {
+                label: '🍎 Deploy iOS App (App Store Connect) [Coming Soon]',
+                value: 'deploy-ios',
+                action: { type: 'script', handler: 'deployIos' }
+            },
+            {
+                label: '🪟 Deploy Windows App (Microsoft Store) [Coming Soon]',
+                value: 'deploy-windows',
+                action: { type: 'script', handler: 'deployWindows' }
+            }
+        );
+    } else if (projectType === 'nextjs') {
+        options.push(
+            {
+                label: '🌐 Deploy Web App (Vercel)',
+                value: 'deploy-web',
+                action: { type: 'script', handler: 'deployWebOnly' }
+            }
+        );
+    } else {
+        options.push(
+            {
+                label: '🌐 Deploy Web App (Firebase Hosting)',
+                value: 'deploy-web',
+                action: { type: 'script', handler: 'deployWebOnly' }
+            }
+        );
+    }
+
+    options.push(
+        { label: '--- Management & Monitoring ---', value: 'sep-management', type: 'separator' },
         {
             label: '🏷️  Tag & Release Management',
             value: 'tag-release-menu',
@@ -55,7 +71,16 @@ export const DeploymentMenuDef: MenuDefinition = {
             value: 'run-tests-deploy',
             action: { type: 'script', handler: 'runTests' }
         },
-        { label: '---', value: 'sep3', type: 'separator' },
+        { label: '---', value: 'sep-back', type: 'separator' },
         { label: '⬅️  Back', value: 'back', action: { type: 'back' } }
-    ]
+    );
+
+    return options;
+};
+
+export const DeploymentMenuDef: MenuDefinition = {
+    id: 'deployment-menu',
+    title: '🚀 Deployment & Release Center',
+    type: 'dynamic',
+    options: getDeploymentMenuOptions
 };

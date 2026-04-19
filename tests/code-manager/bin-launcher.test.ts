@@ -29,7 +29,7 @@ describe('vishnu launcher bootstrap', () => {
 
         expect(execFileSync).toHaveBeenCalledWith(
             process.execPath,
-            [path.join(process.cwd(), 'update.js'), '--launch'],
+            [path.join(process.cwd(), 'scripts', 'js', 'update.js'), '--launch'],
             expect.objectContaining({
                 cwd: process.cwd(),
                 stdio: 'inherit'

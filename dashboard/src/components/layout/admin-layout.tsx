@@ -22,6 +22,7 @@ const getNavItems = (hasMinRole: (role: RoleType) => boolean) => {
   ];
 
   if (hasMinRole("staff")) {
+    items.push({ name: "Control Center", href: "/admin/control-center", icon: Settings });
     items.push({ name: "Clients", href: "/admin/clients", icon: Briefcase });
     items.push({ name: "Support", href: "/admin/support", icon: Inbox });
     items.push({ name: "Portal (Client View)", href: "/portal", icon: Home });
@@ -72,15 +73,16 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                 const isActive = pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href));
                 return (
                   <SidebarMenuItem key={item.name}>
-                    <SidebarMenuButton 
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive}
                       className={`hover:bg-white/5 transition-colors ${isActive ? "bg-white/10 text-white" : "text-zinc-400 hover:text-white"}`}
-                      render={
-                        <Link href={item.href}>
-                          <item.icon className="h-4 w-4 mr-2" />
-                          <span>{item.name}</span>
-                        </Link>
-                      }
-                    />
+                    >
+                      <Link href={item.href}>
+                        <item.icon className="h-4 w-4 mr-2" />
+                        <span>{item.name}</span>
+                      </Link>
+                    </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
               })}

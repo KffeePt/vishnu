@@ -1,0 +1,13 @@
+---
+name: conversation_summary
+description: Summarizes the conversation leading to an escalation.
+version: "1.0"
+variables:
+  - history
+  - userInput
+---
+Resume brevemente la interacción completa hasta el punto de escalación, enfocándote en el problema del usuario y los pasos tomados.
+Historial:
+{{history ? history : ''}}
+ÚLTIMO MENSAJE DEL USUARIO (que llevó a la escalación): "{{userInput ? userInput : ''}}"
+Responde ÚNICAMENTE con el resumen.

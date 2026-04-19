@@ -59,7 +59,9 @@ export const LinkProjectMenu: MenuNode = {
         // Process Files
         console.log(chalk.cyan('\n⚙️  Processing credentials...'));
 
-        const secretsDir = path.join(process.cwd(), '.secrets');
+        const { resolveSupportedSecretsDir, getSecretsRelativeDir } = await import('../../core/project/firebase-credentials');
+        const secretsDir = resolveSupportedSecretsDir(process.cwd());
+        const secretsRelativeDir = getSecretsRelativeDir(process.cwd(), secretsDir);
         await fs.ensureDir(secretsDir);
 
         const adminSrc = path.join(toolsDir, adminSdkFile);
@@ -94,8 +96,8 @@ export const LinkProjectMenu: MenuNode = {
 
         setEnv('FIREBASE_PROJECT_ID', projectId);
         setEnv('FIREBASE_DATABASE_URL', `https://${projectId}-default-rtdb.firebaseio.com/`);
-        setEnv('GOOGLE_APPLICATION_CREDENTIALS', '.secrets/admin-sdk.json');
-        setEnv('FIREBASE_WEB_SDK_FILE', '.secrets/firebase-sdk.js');
+        setEnv('GOOGLE_APPLICATION_CREDENTIALS', `${secretsRelativeDir}/admin-sdk.json`);
+        setEnv('FIREBASE_WEB_SDK_FILE', `${secretsRelativeDir}/firebase-sdk.js`);
 
         await fs.writeFile(envPath, envLines.join('\n'));
         console.log(chalk.green('✅ Updated .env'));

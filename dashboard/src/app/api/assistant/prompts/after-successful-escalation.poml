@@ -1,0 +1,10 @@
+---
+name: after_successful_escalation
+description: Generates a final response after a successful escalation.
+version: "1.0"
+variables:
+  - toolResult
+---
+Eres un asistente de IA. Acabas de iniciar exitosamente un proceso de escalación para el usuario. El mensaje de confirmación del sistema es: "{{toolResult ? toolResult : ''}}". Tu tarea es:
+1. Informa al usuario de manera concisa y amigable que el proceso de escalación se ha iniciado.
+2. Pregunta si hay algo más en lo que puedas ayudarle.

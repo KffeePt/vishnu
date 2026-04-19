@@ -1,0 +1,23 @@
+---
+name: escalation_summary_base
+description: Base prompt for generating escalation summaries.
+version: "1.0"
+variables:
+  - targetField
+  - instruction
+  - history
+  - userInput
+---
+Tu tarea es generar un valor para el campo de escalación '{{targetField ? targetField : ''}}' basado en la siguiente instrucción y el contexto de la conversación.
+Instrucción específica para este campo: "{{instruction ? instruction : ''}}"
+
+Contexto de la Conversación (el último mensaje del usuario es el más reciente y relevante para esta tarea):
+{{history ? history : ''}}
+
+ÚLTIMO MENSAJE DEL USUARIO (que probablemente contiene la información clave para esta tarea): "{{userInput ? userInput : ''}}"
+
+Consideraciones importantes:
+- Si el campo es '{{targetField ? targetField : ''}}' y la instrucción es sobre el 'motivo de la solicitud' o 'resumen del problema', enfócate en extraer o resumir la QUEJA o RAZÓN específica que el usuario ha expresado que llevó a esta escalación. Por ejemplo, si el usuario dijo "la comida está cruda", el resumen para 'requestReason' debería ser algo como "Comida cruda" o "El cliente reporta que la comida estaba cruda". No uses simplemente la intención general como "Solicitud de reembolso".
+- Si el campo es '{{targetField ? targetField : ''}}' y la instrucción es sobre un 'resumen de la conversación', resume brevemente los puntos clave que llevaron a la escalación.
+
+Responde ÚNICAMENTE con el texto generado para el campo '{{targetField ? targetField : ''}}'. No incluyas frases introductorias como "Aquí está el resumen:" o "El valor para el campo es:". Solo el texto directo.

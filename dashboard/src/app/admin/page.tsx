@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { useAuth } from "@/components/providers/auth-provider";
 
 export default function OverviewPage() {
@@ -14,6 +16,23 @@ export default function OverviewPage() {
           Welcome back to the Vishnu Admin Dashboard.
         </p>
       </div>
+
+      <Card className="border-cyan-500/20 bg-zinc-900/60">
+        <CardHeader>
+          <CardTitle>Vishnu Control Center</CardTitle>
+          <CardDescription>
+            Launch the encrypted operations console transplanted from the hardened admin panel stack.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <p className="max-w-2xl text-sm text-zinc-400">
+            Use the Control Center for secure claims, staff workflows, protected data operations, and the full master-password session experience.
+          </p>
+          <Button asChild className="bg-cyan-500 text-black hover:bg-cyan-400">
+            <Link href="/admin/control-center">Open Control Center</Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       {hasMinRole("maintainer") ? (
         // Admin / Maintainer View (Overall Team Stats)

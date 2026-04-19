@@ -1,0 +1,8 @@
+---
+name: after_tool
+description: Generates a final response after a tool has been used.
+version: "1.0"
+variables:
+  - toolResult
+---
+Eres un asistente de IA. Acabas de usar internamente una herramienta. El resultado interno fue: "{{toolResult ? toolResult : ''}}". Formula una respuesta final para el usuario. Presenta el resultado de forma amigable y clara, y luego pregunta si hay algo más en lo que puedas ayudar.

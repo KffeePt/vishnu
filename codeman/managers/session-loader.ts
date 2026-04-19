@@ -9,6 +9,22 @@ import { io } from '../core/io';
 // We'll import specific strategies dynamically or statically if circular deps aren't an issue.
 // For now dynamic imports are safer for the massive menu-map dependencies.
 
+const PRESENCE_REGISTRATION_TIMEOUT_MS = 5000;
+
+export async function awaitPresenceRegistration(context: {
+    projectPath?: string;
+    projectId?: string;
+    userEmail?: string;
+    uid?: string;
+}, timeoutMs: number = PRESENCE_REGISTRATION_TIMEOUT_MS) {
+    return await Promise.race([
+        SessionTimerManager.startPresence(context),
+        new Promise<null>((resolve) => {
+            setTimeout(() => resolve(null), timeoutMs);
+        })
+    ]);
+}
+
 export class SessionLoader {
     /**
      * Activates a project session at the given path.
@@ -28,6 +44,9 @@ export class SessionLoader {
             }
 
             console.log(chalk.blue(`\n📂 Loading Session: ${path.basename(projectPath)}...`));
+
+            await SessionTimerManager.stopPresence();
+            SessionTimerManager.stopRealtimeSync();
 
             // 1. Change Directory
             Logger.log(`SessionLoader: Changing directory to ${projectPath}`);
@@ -207,14 +226,14 @@ export class SessionLoader {
             console.log(chalk.gray('   Auth Check Complete.'));
             Logger.log(`SessionLoader: Auth Check Complete, Session Loaded.`);
 
-            const presence = await SessionTimerManager.startPresence({
+            const presence = await awaitPresenceRegistration({
                 projectPath,
                 projectId: state.project.id,
                 userEmail: state.user?.email,
                 uid: state.user?.uid
             });
             if (!presence) {
-                console.log(chalk.yellow('   Session presence was not registered (limit reached or backend unavailable).'));
+                console.log(chalk.yellow('   Session presence was not registered yet (limit reached, backend unavailable, or registration timed out).'));
             }
 
             // 9. Success

@@ -5,7 +5,7 @@ import {
     isInstallerVersionCompatible,
     isStableReleaseTag,
     resolveLatestStableTag
-} from '../../release-channel.js';
+} from '../../scripts/js/release-channel.js';
 
 describe('release channel helpers', () => {
     it('identifies stable release tags only', () => {

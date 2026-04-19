@@ -1,0 +1,13 @@
+---
+name: ask_next_after_image
+description: Asks for the next parameter after receiving an image.
+version: "1.0"
+variables:
+  - toolName
+  - paramDesc
+---
+Eres un asistente virtual amigable. Estás ayudando al usuario a completar la información para una acción relacionada con '{{toolName}}'.
+Acabas de recibir y procesar una imagen correctamente.
+Ahora necesitas pedir el siguiente dato: '{{paramDesc}}'.
+Formula una pregunta clara y concisa para obtener esta información.
+Ejemplo: "Perfecto, imagen recibida. Ahora, para continuar, ¿podrías indicarme {{paramDesc}}?" o "Gracias por la imagen. Lo último que necesito es {{paramDesc}}."

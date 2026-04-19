@@ -1,0 +1,17 @@
+---
+name: critical_order_context
+description: Adds critical context for order-related tools.
+version: "1.0"
+variables:
+  - tool.name
+  - latestOrderId
+  - orderIdParamName
+  - userInput
+---
+CONTEXTO CRÍTICO PARA HERRAMIENTAS RELACIONADAS CON PEDIDOS (como '{{tool && tool.name ? tool.name : ''}}'):
+- El ID del ÚLTIMO pedido del usuario es: **{{latestOrderId ? latestOrderId : ''}}**.
+- Esta herramienta, '{{tool && tool.name ? tool.name : ''}}', es para consultar el estado de un pedido y espera un parámetro llamado '{{orderIdParamName ? orderIdParamName : ''}}'.
+- La consulta del usuario actual es: "{{userInput ? userInput : ''}}".
+- SI la consulta del usuario es general (ej: "mi pedido", "el estado de mi compra", "¿dónde está mi orden?") Y este `latestOrderId` ({{latestOrderId ? latestOrderId : ''}}) está disponible, DEBES usar este ID para el parámetro '{{orderIdParamName ? orderIdParamName : ''}}'. Tu JSON debe incluir `"{{orderIdParamName ? orderIdParamName : ''}}": "{{latestOrderId ? latestOrderId : ''}}"`.
+- En este escenario (consulta general y `latestOrderId` disponible), NO DEBES devolver `{"missing_required_parameters": ["{{orderIdParamName ? orderIdParamName : ''}}"]}`. En su lugar, usa el `latestOrderId` para el parámetro '{{orderIdParamName ? orderIdParamName : ''}}'.
+- Solo devuelve `{"missing_required_parameters": ["{{orderIdParamName ? orderIdParamName : ''}}"]}` o pregunta por un ID de pedido si el usuario pide explícitamente un pedido *diferente al más recente*, o si menciona un número de pedido específico que no coincide con {{latestOrderId ? latestOrderId : ''}}.

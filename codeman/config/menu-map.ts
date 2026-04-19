@@ -306,6 +306,50 @@ registerScript('updateSync', async () => {
     return 'settings';
 });
 
+registerScript('updateVishnuStable', async () => {
+    const path = await import('path');
+    const fs = await import('fs');
+    const { spawn } = await import('child_process');
+    const chalk = (await import('chalk')).default;
+    const inquirer = (await import('inquirer')).default;
+
+    const configuredRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : resolveWorkspaceRoot(process.cwd());
+    const updateScript = path.join(configuredRoot, 'scripts', 'js', 'update.js');
+
+    if (!fs.existsSync(updateScript)) {
+        console.log(chalk.red(`\n❌ Stable updater not found at ${updateScript}`));
+        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+        return 'settings';
+    }
+
+    console.log(chalk.cyan('\n📦 Checking the managed Vishnu stable channel for updates...'));
+
+    const nodeCommand = process.execPath;
+    const success = await new Promise<boolean>((resolve) => {
+        const child = spawn(nodeCommand, [updateScript, '--verbose'], {
+            cwd: configuredRoot,
+            stdio: 'inherit',
+            shell: false,
+            env: {
+                ...process.env,
+                VISHNU_ROOT: configuredRoot
+            }
+        });
+        child.on('close', (code) => resolve(code === 0));
+    });
+
+    if (success) {
+        console.log(chalk.green('\n✅ Stable update check completed.'));
+        state.shouldRestart = true;
+        state.restartTargetNode = 'ROOT';
+        return;
+    }
+
+    console.log(chalk.red('\n❌ Stable update failed.'));
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
+    return 'settings';
+});
+
 // --- Helper: Auth & Env Detection ---
 // Now imported from core/auth-helper to share with create-project
 
@@ -566,6 +610,31 @@ registerScript('closeProject', async () => {
     await SessionTimerManager.stopPresence();
     state.project.rootPath = '';
     state.setProjectType('unknown');
+});
+
+registerScript('returnToLauncherFromSettings', async () => {
+    const { SessionTimerManager } = await import('../core/session-timers');
+    const path = (await import('path')).default;
+    const launcherRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
+
+    await SessionTimerManager.stopPresence();
+    SessionTimerManager.stopRealtimeSync();
+
+    state.project.rootPath = '';
+    state.project.id = undefined;
+    state.project.intelligence = undefined;
+    state.project.security = undefined;
+    state.project.deployment = undefined;
+    state.project.database = undefined;
+    state.setProjectType('unknown');
+
+    try {
+        process.chdir(launcherRoot);
+    } catch {
+        // Keep the menu recovery path resilient even if cwd cannot be changed.
+    }
+
+    return 'ROOT';
 });
 
 registerScript('exitCLI', async () => {
@@ -872,17 +941,17 @@ registerScript('dev-dojo-mode', async () => {
     await new Promise(r => setTimeout(r, 2000));
 
     // 3. Launch Flutter Web Server
-    console.log(chalk.blue('🌐 Launching Flutter Web Server (Port 8081)...'));
+    console.log(chalk.blue('🌐 Launching Flutter Web Server (Port 3000)...'));
     // We check if port is busy first using ProcessManager (optional, but good practice)
-    const isBusy = await ProcessManager.isPortOccupied(8081);
+    const isBusy = await ProcessManager.isPortOccupied(3000);
     if (!isBusy) {
         await ProcessManager.spawnDetachedWindow(
             'Flutter Web Server',
-            'flutter run -d web-server --web-port=8081',
+            'flutter run -d web-server --web-port=3000',
             projectRoot
         );
     } else {
-        console.log(chalk.yellow('   > Port 8081 busy. Assuming Web Server running.'));
+        console.log(chalk.yellow('   > Port 3000 busy. Assuming Web Server running.'));
     }
 
     // 4. Run Shiva (The AI)
@@ -898,7 +967,17 @@ registerScript('manage-secrets', async () => {
     const projectPath = state.project.rootPath || process.cwd();
 
     await runSecretsManager(projectPath);
-    return 'dev-dojo';
+    return 'dev-ops-menu';
+});
+
+registerScript('project-set-claims', async () => {
+    const { runProjectClaimsManager } = await import('../core/project-claims-manager');
+    const projectRoot = state.project.rootPath || process.cwd();
+    await runProjectClaimsManager({
+        projectRoot,
+        title: 'Project Claims'
+    });
+    return 'dev-ops-menu';
 });
 
 registerScript('dev-dojo-close', async () => {
@@ -1396,40 +1475,19 @@ registry.register(createSchemaMenu(GhActionsMenuDef));
 // --- Deployment Handlers ---
 
 registerScript('deployAndroid', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
-    const { state } = await import('../core/state');
+    const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
-
-    // Build APK
-    await BuildManager.buildAll(state.project.rootPath, 'release'); // This builds everything, maybe overkill if just want APK?
-    // Actually buildAll is "Release Prep". If we just want component deploy, we might need granular builds.
-    // For now, let's just run apk build command directly or add specific build methods.
-    // BuildManager already has startProcess but that is 'run'.
-    // Let's use runCommand from BuildManager if we can, or just spawn.
-    // Better: BuildManager.buildAndroid(...) - we technically have buildAll doing it. 
-    // Let's just use buildAll for now to be safe, or if we want faster, we need to extract methods in BuildManager.
-    // Given the prompt, let's stick to calling the buildAll for consistency or granular if easy.
-    // actually, let's just call the specific build command here for speed.
-    // But we need to upload to release... which release? The "current" one?
-    // Usually you deploy a specific version. 
-    // This granular "Deploy APK" implies "Build & Upload to LATEST release" or "Build & Release one artifact"?
-    // Let's assume it triggers the standard release flow but just for this artifact? 
-    // actually, "Deploy APK" in menu usually means "Install to device" or "Upload to Distribution"?
-    // The menu says "Deploy APK (Android) -> Release". So it means upload to GH Release.
-    // We need a version.
-
-    // Let's simplify: These granular options might be complex without a "current release context".
-    // Let's make them wrappers around runRelease with preset flags?
-    // Or just "build and upload to LATEST tag"?
-
-    console.log('Feature coming soon: Granular Deploy. Please use "Run Full Deployment" for now.');
+    console.log(chalk.yellow('\nAndroid Play Store deployment automation is not live yet.'));
+    console.log(chalk.gray('This target now stays visible as part of the universal deployment flow, and it will read from the supported .secrets credential layout once the publisher automation is wired.'));
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'deployment-menu';
 });
 
 registerScript('deployWindows', async () => {
-    console.log('Feature coming soon: Granular Deploy. Please use "Run Full Deployment" for now.');
+    const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
+    console.log(chalk.yellow('\nWindows Store deployment automation is not live yet.'));
+    console.log(chalk.gray('The deployment slot is reserved so the TUI can stay stable while the Microsoft Store publisher flow is wired into the same .secrets-based credential setup.'));
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'deployment-menu';
 });
@@ -1445,19 +1503,19 @@ registerScript('deployMac', async () => {
 });
 
 registerScript('deployIos', async () => {
-    const { BuildManager } = await import('../managers/build-manager');
-    const { state } = await import('../core/state');
+    const chalk = (await import('chalk')).default;
     const inquirer = (await import('inquirer')).default;
-    await BuildManager.buildIos(state.project.rootPath, 'release', 'logs/manual');
+    console.log(chalk.yellow('\niOS App Store deployment automation is not live yet.'));
+    console.log(chalk.gray('This target is intentionally exposed now so the universal deployment menu already matches the future App Store Connect flow.'));
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'deployment-menu';
 });
 
 registerScript('deployWebOnly', async () => {
+    const { ReleaseManager } = await import('../managers/release-manager');
+    const { state } = await import('../core/state');
     const inquirer = (await import('inquirer')).default;
-    const chalk = (await import('chalk')).default;
-    console.log(chalk.cyan('\n🌐 Dashboard deploys automatically via Vercel on git push.'));
-    console.log(chalk.gray('  Visit https://vercel.com/dashboard to manage deployments.'));
+    await ReleaseManager.deployWeb(state.project.rootPath || process.cwd());
     await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'deployment-menu';
 });
@@ -2414,25 +2472,19 @@ registerScript('listApiJobs', async () => {
 
 // --- Maintenance Deploy Logic Handlers ---
 registerScript('maintDeployAll', async () => {
-    const { ReleaseManager } = await import('../managers/release-manager');
+    const { ProcessManager } = await import('../core/process-manager');
     const inquirer = (await import('inquirer')).default;
     const chalk = (await import('chalk')).default;
-    console.log(chalk.magenta.bold('\n🌟 Initiating Full Project Deployment (TUI + Firebase)\n'));
-    
-    // Next, launch the interactive TUI Release process
-    // which builds CodeMan Windows/Mac/Linux and uploads GH Release
-    console.log(chalk.cyan('Step 1: TUI Release Pipeline'));
-    const releaseOk = await runReleasePipeline();
-    if (!releaseOk) {
-        console.log(chalk.red('\n❌ Release pipeline failed or was aborted. Skipping Firebase deploy.'));
-        await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
-        return 'maint-deploy-menu';
-    }
-    
-    console.log(chalk.cyan('\nStep 2: Firebase Deployment (Functions + Rules)'));
-    await ReleaseManager.deployAllFirebase(process.cwd());
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Deployment Complete. Press Enter...' }]);
+    const path = (await import('path')).default;
+    const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
+    console.log(chalk.magenta.bold('\n🌟 Launching Vishnu Deploy All'));
+    console.log(chalk.gray('This now uses the same production cd.bat flow as the manual release path.'));
+    await ProcessManager.spawnDetachedWindow(
+        'Vishnu Deploy All',
+        'set "VISHNU_NO_PAUSE=1" && call scripts\\cd.bat',
+        vishnuRoot
+    );
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Deployment window launched. Press Enter...' }]);
     return 'maint-deploy-menu';
 });
 
@@ -2463,6 +2515,20 @@ registerScript('maintSetupFirebase', async () => {
     const envManagerImport = await import('../managers/env-setup');
     const EnvSetupManager = envManagerImport.EnvSetupManager as any;
     await EnvSetupManager.interactiveSetup();
+    return 'maintenance-menu';
+});
+
+registerScript('maintMigrateVishnuBackend', async () => {
+    const chalk = (await import('chalk')).default;
+    const path = (await import('path')).default;
+    const inquirer = (await import('inquirer')).default;
+    const envManagerImport = await import('../managers/env-setup');
+    const EnvSetupManager = envManagerImport.EnvSetupManager as any;
+    const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
+
+    console.log(chalk.cyan('Starting Vishnu backend credential migration...'));
+    await EnvSetupManager.migrateVishnuBackendCredentials(vishnuRoot);
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter...' }]);
     return 'maintenance-menu';
 });
 
@@ -2523,16 +2589,13 @@ registerScript('maintRunE2E', async () => {
 
 // --- New Maintenance Options ---
 registerScript('maintSetClaims', async () => {
-    const { ProcessManager } = await import('../core/process-manager');
-    const path = await import('path');
-    const chalk = (await import('chalk')).default;
-    const inquirer = (await import('inquirer')).default;
+    const { runProjectClaimsManager } = await import('../core/project-claims-manager');
     const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
 
-    console.log(chalk.yellow('\n👑 Opening Set User Claims TUI in a new window...'));
-    await ProcessManager.spawnDetachedWindow('Set User Claims', 'node scripts\\set_claims.js', vishnuRoot);
-    
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Task launched. Press Enter to return to menu...' }]);
+    await runProjectClaimsManager({
+        projectRoot: vishnuRoot,
+        title: 'Vishnu Global Claims'
+    });
     return 'maintenance-menu';
 });
 
@@ -2747,6 +2810,7 @@ async function requireMaintenanceAccess(): Promise<boolean> {
     const { state } = await import('../core/state');
     const { UserConfigManager } = await import('../config/user-config');
     const { AuthTokenStore } = await import('../core/auth/token-store');
+    const { EnvSetupManager } = await import('../managers/env-setup');
     const chalk = (await import('chalk')).default;
     const path = (await import('path')).default;
     const { fileURLToPath } = await import('url');
@@ -2765,17 +2829,25 @@ async function requireMaintenanceAccess(): Promise<boolean> {
     
     // Force Auth against Vishnu Project
     const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : path.resolve(__dirname, '..', '..');
-    const serviceAccountPath = path.join(vishnuRoot, '.secrets', 'admin-sdk.json');
+    await EnvSetupManager.ensureVishnuBackendBootstrap(vishnuRoot, { pauseAfterSetup: false });
+    const { resolveFirebaseBackendConfig } = await import('../core/project/firebase-credentials');
+    const vishnuBackend = resolveFirebaseBackendConfig(vishnuRoot);
+
+    if (!vishnuBackend) {
+        console.error(chalk.red('\n🚫 Vishnu backend credentials are incomplete.'));
+        console.log(chalk.gray('   Expected .secrets/admin-sdk.json plus firebase-sdk.js/firebase-sdk.json.'));
+        return false;
+    }
 
     // Switch context to Vishnu Root for Maintenance
     process.chdir(vishnuRoot);
     state.project.rootPath = vishnuRoot;
     
     const vishnuAuth = {
-        projectId: 'vishnu-b65bd',
-        apiKey: 'AIzaSyCSntkOv0yMAAF2CduDvl638EsdMN6xU1U',
-        authDomain: 'vishnu-b65bd.firebaseapp.com',
-        serviceAccount: serviceAccountPath
+        projectId: vishnuBackend.projectId,
+        apiKey: vishnuBackend.apiKey,
+        authDomain: vishnuBackend.authDomain,
+        serviceAccount: vishnuBackend.serviceAccountPath
     };
 
     const success = await AuthService.login(state, vishnuAuth);
@@ -2829,10 +2901,12 @@ registerScript('maintDeployPrep', async () => {
 
 registerScript('maintDeployPrepWindow', async () => {
     const { ProcessManager } = await import('../core/process-manager');
+    const path = (await import('path')).default;
+    const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
     await ProcessManager.spawnDetachedWindow(
         'Vishnu Deploy Prep',
-        'codeman --run-maint-deploy-prep',
-        process.cwd()
+        'set "VISHNU_NO_PAUSE=1" && call scripts\\ci.bat',
+        vishnuRoot
     );
     return 'maint-deploy-menu';
 });

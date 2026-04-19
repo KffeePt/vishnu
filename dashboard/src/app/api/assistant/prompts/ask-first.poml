@@ -1,0 +1,13 @@
+---
+name: ask_first
+description: Asks for the first parameter.
+version: "1.0"
+variables:
+  - toolName
+  - paramDesc
+  - toolContext
+---
+Eres un asistente virtual amigable. Estás a punto de ayudar al usuario con una tarea que requiere la herramienta '{{toolName}}'.
+Para comenzar, necesitas obtener la siguiente información: '{{paramDesc}}'.
+Formula una pregunta clara y concisa para solicitar únicamente esta primera pieza de información.
+Ejemplo: "Entendido. Para poder ayudarte con {{toolContext}}, ¿podrías indicarme {{paramDesc}}?"

@@ -6,11 +6,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
     buildEnvValuesFromCredentialFiles,
+    ensureVishnuBackendCredentialBundle,
+    inspectCredentialFiles,
     normalizeCredentialFiles,
     guardFlutterNativeFirebaseConfig,
     inspectFlutterFirebaseOptions,
     parseFirebaseWebSdkSource,
     parseGoogleOAuthClientSource,
+    resolveFirebaseBackendConfig,
+    resolveFirebaseProjectId,
+    resolveGoogleApplicationCredentialsPath,
     syncProjectCredentialsFromSecrets
 } from '../../../codeman/core/project/firebase-credentials';
 
@@ -162,6 +167,141 @@ describe('firebase credential helpers', () => {
             expect(envContent).not.toContain('ANDROID_SHA1=');
             expect(envLocalContent).toContain('NEXT_PUBLIC_FIREBASE_PROJECT_ID=test-project-id');
             expect(envLocalContent).toContain('GOOGLE_APPLICATION_CREDENTIALS=.secrets/admin-sdk.json');
+        } finally {
+            fs.rmSync(projectPath, { recursive: true, force: true });
+        }
+    });
+
+    it('treats scripts/.secrets as a supported credential layout', () => {
+        const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'vishnu-scripts-secrets-'));
+        try {
+            fs.mkdirSync(path.join(projectPath, 'scripts', '.secrets'), { recursive: true });
+            fs.writeFileSync(
+                path.join(projectPath, 'scripts', '.secrets', 'admin-sdk.json'),
+                fs.readFileSync(path.join(fixturesDir, 'admin-sdk.json'), 'utf-8')
+            );
+            fs.writeFileSync(
+                path.join(projectPath, 'scripts', '.secrets', 'firebase-sdk.js'),
+                fs.readFileSync(path.join(fixturesDir, 'firebase-sdk.js'), 'utf-8')
+            );
+            fs.writeFileSync(
+                path.join(projectPath, 'scripts', '.secrets', 'client-secret-oauth.json'),
+                fs.readFileSync(path.join(fixturesDir, 'client_secret_oauth.json'), 'utf-8')
+            );
+            fs.writeFileSync(path.join(projectPath, 'scripts', '.secrets', 'stripe.json'), '{"account":"test"}\n');
+            fs.writeFileSync(path.join(projectPath, 'scripts', '.secrets', 'app-check.json'), '{"provider":"debug"}\n');
+
+            const inspection = inspectCredentialFiles(projectPath);
+            const syncResult = syncProjectCredentialsFromSecrets({ projectPath, framework: 'custom' });
+            const envContent = fs.readFileSync(path.join(projectPath, '.env'), 'utf-8');
+            const envExampleContent = fs.readFileSync(path.join(projectPath, '.env.example'), 'utf-8');
+
+            expect(inspection.suggestedMoves).toEqual([]);
+            expect(inspection.missingFiles).toEqual([]);
+            expect(syncResult.performed).toBe(true);
+            expect(envContent).toContain('GOOGLE_APPLICATION_CREDENTIALS=scripts/.secrets/admin-sdk.json');
+            expect(envContent).toContain('GOOGLE_OAUTH_CLIENT_FILE=scripts/.secrets/client-secret-oauth.json');
+            expect(envContent).toContain('FIREBASE_WEB_SDK_FILE=scripts/.secrets/firebase-sdk.json');
+            expect(envExampleContent).toContain('GOOGLE_APPLICATION_CREDENTIALS=scripts/.secrets/admin-sdk.json');
+        } finally {
+            fs.rmSync(projectPath, { recursive: true, force: true });
+        }
+    });
+
+    it('resolves deploy credentials and project id from scripts/.secrets env wiring', () => {
+        const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'vishnu-deploy-context-'));
+        try {
+            fs.mkdirSync(path.join(projectPath, 'scripts', '.secrets'), { recursive: true });
+            fs.writeFileSync(
+                path.join(projectPath, 'scripts', '.secrets', 'admin-sdk.json'),
+                fs.readFileSync(path.join(fixturesDir, 'admin-sdk.json'), 'utf-8')
+            );
+            fs.writeFileSync(
+                path.join(projectPath, 'scripts', '.secrets', 'firebase-sdk.js'),
+                fs.readFileSync(path.join(fixturesDir, 'firebase-sdk.js'), 'utf-8')
+            );
+            fs.writeFileSync(
+                path.join(projectPath, '.env'),
+                [
+                    'GOOGLE_APPLICATION_CREDENTIALS=scripts/.secrets/admin-sdk.json',
+                    'FIREBASE_PROJECT_ID=test-project-id'
+                ].join('\n') + '\n'
+            );
+
+            expect(resolveGoogleApplicationCredentialsPath(projectPath)).toBe(
+                path.join(projectPath, 'scripts', '.secrets', 'admin-sdk.json')
+            );
+            expect(resolveFirebaseProjectId(projectPath)).toBe('test-project-id');
+        } finally {
+            fs.rmSync(projectPath, { recursive: true, force: true });
+        }
+    });
+
+    it('resolves backend auth config directly from the standard .secrets files', () => {
+        const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'vishnu-backend-config-'));
+        try {
+            fs.mkdirSync(path.join(projectPath, '.secrets'), { recursive: true });
+            fs.writeFileSync(
+                path.join(projectPath, '.secrets', 'admin-sdk.json'),
+                fs.readFileSync(path.join(fixturesDir, 'admin-sdk.json'), 'utf-8')
+            );
+            fs.writeFileSync(
+                path.join(projectPath, '.secrets', 'firebase-sdk.js'),
+                fs.readFileSync(path.join(fixturesDir, 'firebase-sdk.js'), 'utf-8')
+            );
+
+            const backend = resolveFirebaseBackendConfig(projectPath);
+
+            expect(backend).not.toBeNull();
+            expect(backend?.projectId).toBe('test-project-id');
+            expect(backend?.apiKey).toBe('test-api-key');
+            expect(backend?.authDomain).toBe('test-project-id.firebaseapp.com');
+            expect(backend?.databaseURL).toBe('https://test-project-id-default-rtdb.firebaseio.com/');
+            expect(backend?.serviceAccountPath).toBe(path.join(projectPath, '.secrets', 'admin-sdk.json'));
+        } finally {
+            fs.rmSync(projectPath, { recursive: true, force: true });
+        }
+    });
+
+    it('prepares the Vishnu backend bundle from repo-root files and generates firebase-sdk.json', () => {
+        const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'vishnu-bootstrap-ready-'));
+        try {
+            fs.writeFileSync(
+                path.join(projectPath, 'admin-sdk.json'),
+                fs.readFileSync(path.join(fixturesDir, 'admin-sdk.json'), 'utf-8')
+            );
+            fs.writeFileSync(
+                path.join(projectPath, 'firebase-sdk.js'),
+                fs.readFileSync(path.join(fixturesDir, 'firebase-sdk.js'), 'utf-8')
+            );
+
+            const status = ensureVishnuBackendCredentialBundle(projectPath);
+
+            expect(status.ready).toBe(true);
+            expect(status.adminSdkPath).toBe(path.join(projectPath, '.secrets', 'admin-sdk.json'));
+            expect(status.clientSdkPath).toBe(path.join(projectPath, '.secrets', 'firebase-sdk.js'));
+            expect(status.clientSdkJsonPath).toBe(path.join(projectPath, '.secrets', 'firebase-sdk.json'));
+            expect(status.backendConfig?.projectId).toBe('test-project-id');
+            expect(status.movedFiles.length).toBeGreaterThanOrEqual(3);
+            expect(fs.existsSync(path.join(projectPath, '.secrets', 'firebase-sdk.json'))).toBe(true);
+        } finally {
+            fs.rmSync(projectPath, { recursive: true, force: true });
+        }
+    });
+
+    it('reports the missing Vishnu backend files when the bootstrap bundle is incomplete', () => {
+        const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'vishnu-bootstrap-missing-'));
+        try {
+            fs.writeFileSync(
+                path.join(projectPath, 'firebase-sdk.js'),
+                fs.readFileSync(path.join(fixturesDir, 'firebase-sdk.js'), 'utf-8')
+            );
+
+            const status = ensureVishnuBackendCredentialBundle(projectPath);
+
+            expect(status.ready).toBe(false);
+            expect(status.missingFiles).toContain('.secrets/admin-sdk.json');
+            expect(status.clientSdkJsonPath).toBe(path.join(projectPath, '.secrets', 'firebase-sdk.json'));
         } finally {
             fs.rmSync(projectPath, { recursive: true, force: true });
         }

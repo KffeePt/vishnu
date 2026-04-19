@@ -113,10 +113,12 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     console.clear();
     console.log(chalk.bold.yellow('\n⚠️  Environment Not Configured (Cloud Features Enabled)'));
     console.log(chalk.gray('   This project is configured to use Cloud/Firebase features but is missing .env.'));
-    console.log(chalk.cyan('\n   To configure it automatically, please drop the following files into the .secrets folder:'));
-    console.log(chalk.white('   - ') + chalk.bold('.secrets/admin-sdk.json') + chalk.dim(' (Firebase Admin SDK)'));
-    console.log(chalk.white('   - ') + chalk.bold('.secrets/firebase-sdk.js') + chalk.dim(' (Firebase Client SDK)'));
-    console.log(chalk.white('   - ') + chalk.bold('.secrets/client_secret_oauth.json') + chalk.dim(' (Google OAuth client export)'));
+    console.log(chalk.cyan('\n   To configure it automatically, please drop the following files into .secrets/ or scripts/.secrets/:'));
+    console.log(chalk.white('   - ') + chalk.bold('admin-sdk.json') + chalk.dim(' (Firebase Admin SDK)'));
+    console.log(chalk.white('   - ') + chalk.bold('firebase-sdk.js') + chalk.dim(' (Firebase Client SDK)'));
+    console.log(chalk.white('   - ') + chalk.bold('client-secret-oauth.json') + chalk.dim(' (Google OAuth client export)'));
+    console.log(chalk.white('   - ') + chalk.bold('app-check.json') + chalk.dim(' (optional App Check config)'));
+    console.log(chalk.white('   - ') + chalk.bold('stripe.json') + chalk.dim(' (optional Stripe payload/config)'));
     console.log(chalk.dim('\n   Waiting for files... (Press Ctrl+C to cancel)'));
 
     // Poll for files
@@ -154,7 +156,7 @@ async function checkEnvAndSetup(forceLauncher: boolean = false): Promise<boolean
     });
 
     if (!syncResult.performed) {
-      console.log(chalk.red('Error parsing credential files. Make sure admin-sdk.json, firebase-sdk.js, and client_secret_oauth.json are valid.'));
+      console.log(chalk.red('Error parsing credential files. Make sure admin-sdk.json, firebase-sdk.js, and client-secret-oauth.json are valid.'));
       return true;
     }
 
@@ -290,6 +292,11 @@ async function handleCLIArgs(): Promise<boolean> {
   const { state } = await import('./core/state');
   const fs = await import('fs');
   const path = await import('path');
+  const ensureVishnuMaintenanceBackend = async () => {
+      const { EnvSetupManager } = await import('./managers/env-setup');
+      const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : path.resolve(__dirname, '..');
+      return await EnvSetupManager.ensureVishnuBackendBootstrap(vishnuRoot);
+  };
 
   // Perform project detection for CLI mode as well
   const isFlutter = fs.existsSync(path.join(process.cwd(), 'pubspec.yaml'));
@@ -483,6 +490,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintDeployAll) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu Full Deployment', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintDeployAll');
@@ -492,6 +500,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintTuiRelease) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu TUI Release', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintDeployRelease');
@@ -501,6 +510,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintRulesDeploy) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu Rules Deploy', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintDeployRules');
@@ -510,6 +520,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintFunctionsDeploy) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu Functions Deploy', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintDeployDash'); // Maps to deployFunctionsAPI in menu-map
@@ -519,6 +530,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintDashDev) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu Dashboard Dev', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintDashboardDev');
@@ -528,6 +540,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintSetClaims) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu Set Claims', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintSetClaims');
@@ -537,6 +550,7 @@ async function handleCLIArgs(): Promise<boolean> {
           return true;
       }
       if (options.maintSetupFirebase) {
+          await ensureVishnuMaintenanceBackend();
           await runWithPause('Vishnu Firebase Setup', async () => {
               const { registry } = await import('./core/registry');
               const handler = registry.getScript('maintSetupFirebase');
@@ -626,6 +640,11 @@ async function bootstrap() {
       } catch (e) {
         console.error(chalk.red(`Failed to change directoryOr run command: ${e}`));
       }
+    }
+
+    {
+      const { EnvSetupManager } = await import('./managers/env-setup');
+      await EnvSetupManager.ensureVishnuBackendBootstrap(launcherRoot);
     }
 
     // console.clear(); // Removed aggressive clear. Let the next UI component handle it or keep history.

@@ -16,11 +16,11 @@ class FiverrGateway {
             redirectUrl: redirectUrl.toString()
         };
     }
-    async createSubscription(plan, customer, externalReference) {
+    async createSubscription(_plan, _customer, _externalReference) {
         // Fiverr does not support Direct API subscription creation
         throw new Error("Fiverr does not support programmatic subscriptions via API.");
     }
-    async cancelSubscription(subscriptionId) {
+    async cancelSubscription(_subscriptionId) {
         throw new Error("Fiverr does not support programmatic cancellation.");
     }
     async handleWebhook(req) {
@@ -38,7 +38,7 @@ class FiverrGateway {
         }
         return null;
     }
-    async getPaymentStatus(paymentId) {
+    async getPaymentStatus(_paymentId) {
         return { status: "unknown_in_fiverr" };
     }
 }

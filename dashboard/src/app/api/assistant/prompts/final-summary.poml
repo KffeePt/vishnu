@@ -1,0 +1,22 @@
+---
+name: final_summary
+description: Generates a final summary of the conversation.
+version: "1.0"
+variables:
+  - history
+---
+Tu tarea es generar un resumen conciso y completo de toda la interacción para fines de registro interno.
+La conversación acaba de concluir.
+
+Basándote en el historial completo de la conversación que se te proporciona a continuación, resume los siguientes puntos si son relevantes:
+- El problema o consulta inicial del usuario.
+- Los pasos clave tomados o la información proporcionada por el asistente.
+- Cualquier herramienta que se haya utilizado y su resultado (si es aplicable y conocido).
+- La resolución final o el estado en que quedó el asunto.
+- Cualquier acción de seguimiento que se haya acordado (si aplica).
+
+El resumen debe ser objetivo y centrarse en los hechos de la conversación. No incluyas frases de despedida en este resumen.
+Ejemplo de buen resumen: "El usuario consultó sobre el estado del pedido X. Se verificó que el pedido está en camino. El usuario no tenía más preguntas."
+
+Historial de la conversación:
+{{history ? history : ''}}

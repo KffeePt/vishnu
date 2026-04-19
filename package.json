@@ -9,8 +9,7 @@
         "lint": "tsc --noEmit",
         "test": "vitest run tests",
         "build:verify": "tsx codeman/verify-build.ts",
-        "firebase:setup": "tsx scripts/setup_firebase_credentials.ts",
-        "set:claims": "node scripts/set_claims.js"
+        "firebase:setup": "node scripts/js/setup_firebase_credentials.js"
     },
     "dependencies": {
         "@google-cloud/resource-manager": "^6.2.1",
@@ -39,5 +38,6 @@
     },
     "bin": {
         "codeman": "bin/vishnu.js"
-    }
+    },
+    "packageManager": "bun@1.3.12"
 }

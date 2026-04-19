@@ -11,6 +11,7 @@ import chalk from 'chalk';
 import { AuthTokenStore } from './auth/token-store';
 import { inferRoleFromClaims } from './security/role-verifier';
 import { SessionTimerManager } from './session-timers';
+import { MAX_BROWSER_SESSION_AGE_MS } from './auth/access-policy';
 
 // Helper to open browser
 const openBrowser = async (url: string) => {
@@ -183,6 +184,8 @@ export class AuthService {
                     const cfData = await cfResp.json() as any;
                     if (cfData.result?.authorized === true && cfData.result?.role) {
                         userRole = cfData.result.role;
+                    } else if (cfData.result?.authorized === false) {
+                        userRole = null;
                     }
                 } else {
                     console.log(chalk.yellow(`[Auth] verifyAccess CF returned ${cfResp.status}`));
@@ -195,7 +198,9 @@ export class AuthService {
         };
 
         // Attempt token restore (and refresh) before opening browser
-        const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey, globalReauthAt);
+        const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey, globalReauthAt, {
+            maxSessionAgeMs: MAX_BROWSER_SESSION_AGE_MS
+        });
         if (storedIdToken) {
             try {
                 const decodedToken = await admin.auth().verifyIdToken(storedIdToken);
@@ -284,7 +289,8 @@ export class AuthService {
                                     AuthTokenStore.save({
                                         firebaseIdToken: idToken,
                                         refreshToken,
-                                        expiresAt: effectiveExpiresAt
+                                        expiresAt: effectiveExpiresAt,
+                                        sessionStartedAt: decodedToken.auth_time ? decodedToken.auth_time * 1000 : Date.now()
                                     });
                                 }
 

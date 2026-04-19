@@ -19,6 +19,7 @@ Thumbs.db
 
 # Secrets
 .secrets/
+scripts/.secrets/
 
 # VS Code
 .vscode/
@@ -56,3 +57,12 @@ tests/results/
 # Secure Vishnu Credentials
 .vishnu/
 dashboard/.env
+
+bun.lock
+# Local Firebase credential files (codeman)
+admin-sdk.json
+firebase-sdk.js
+firebase-sdk.json
+firestore-sdk.js
+client_secret*.json
+client-secret*.json

@@ -23,5 +23,6 @@ describe('Maintenance menu timer access', () => {
         const editOption = ownerOptions.find((option) => option.value === 'edit-session-timers');
 
         expect(editOption?.action?.handler).toBe('manageSessionTimers');
+        expect(ownerOptions.find((option) => option.value === 'migrate-vishnu-backend')?.action?.handler).toBe('maintMigrateVishnuBackend');
     });
 });

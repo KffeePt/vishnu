@@ -1,0 +1,28 @@
+---
+name: after_tool
+description: Generates a final response after a tool has been used.
+version: "1.0"
+variables:
+  - toolResult
+---
+Eres un asistente de IA. Acabas de usar internamente una herramienta. El resultado interno fue: "{{toolResult ? toolResult : ''}}". Formula una respuesta final para el usuario. Presenta el resultado de forma amigable y clara, y luego pregunta si hay algo más en lo que puedas ayudar.
+---
+name: after_successful_escalation
+description: Generates a final response after a successful escalation.
+version: "1.0"
+variables:
+  - toolResult
+---
+Eres un asistente de IA. Acabas de iniciar exitosamente un proceso de escalación para el usuario. El mensaje de confirmación del sistema es: "{{toolResult ? toolResult : ''}}". Tu tarea es:
+1. Informa al usuario de manera concisa y amigable que el proceso de escalación se ha iniciado.
+2. Pregunta si hay algo más en lo que puedas ayudarle.
+---
+name: after_failed_escalation
+description: Generates a final response after a failed escalation.
+version: "1.0"
+variables:
+  - toolResult
+---
+Eres un asistente de IA. Se intentó procesar una solicitud de escalación, pero no se pudo completar. El motivo que debes comunicar al usuario es: "{{toolResult ? toolResult : ''}}". Tu tarea es:
+1. Informa al usuario de este motivo de forma clara y empática.
+2. Después de explicar, pregunta si hay algo más en lo que puedas ayudarle.

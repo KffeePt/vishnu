@@ -5,8 +5,76 @@ import * as path from 'path';
 import fs from 'fs-extra';
 import inquirer from 'inquirer';
 import { ProcessUtils } from '../utils/process-utils';
+import {
+    detectFramework,
+    resolveFirebaseProjectId,
+    resolveGoogleApplicationCredentialsPath
+} from '../core/project/firebase-credentials';
 
 export class ReleaseManager {
+    private static quoteForCmd(value: string): string {
+        return value.replace(/"/g, '""');
+    }
+
+    private static buildFirebaseCommandPrefix(projectRoot: string): { ok: true; prefix: string; projectId: string } | { ok: false; error: string } {
+        const credentialsPath = resolveGoogleApplicationCredentialsPath(projectRoot);
+        if (!credentialsPath) {
+            return {
+                ok: false,
+                error: 'Missing admin-sdk.json in the supported secrets folder. Run the credential setup first.'
+            };
+        }
+
+        const projectId = resolveFirebaseProjectId(projectRoot);
+        if (!projectId) {
+            return {
+                ok: false,
+                error: 'Missing Firebase project ID. Re-run the project credential sync so .env and .secrets are aligned.'
+            };
+        }
+
+        const prefix = [
+            `set "GOOGLE_APPLICATION_CREDENTIALS=${this.quoteForCmd(credentialsPath)}"`,
+            `set "GOOGLE_CLOUD_PROJECT=${this.quoteForCmd(projectId)}"`,
+            `set "GCLOUD_PROJECT=${this.quoteForCmd(projectId)}"`
+        ].join(' && ');
+
+        return { ok: true, prefix, projectId };
+    }
+
+    private static async launchFirebaseDeployWindow(options: {
+        title: string;
+        projectRoot: string;
+        firebaseArgs: string[];
+        intro: string;
+    }): Promise<boolean> {
+        console.log(chalk.cyan(`\n${options.intro}`));
+        if (!await ProcessUtils.checkCommand('firebase')) {
+            console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+            return false;
+        }
+
+        const commandContext = this.buildFirebaseCommandPrefix(options.projectRoot);
+        if (!commandContext.ok) {
+            console.log(chalk.red(`Deploy blocked: ${commandContext.error}`));
+            return false;
+        }
+
+        try {
+            const { ProcessManager } = await import('../core/process-manager');
+            const firebaseCommand = `firebase ${options.firebaseArgs.join(' ')} --project "${this.quoteForCmd(commandContext.projectId)}" --non-interactive`;
+            await ProcessManager.spawnElevatedDetachedWindow(
+                options.title,
+                `${commandContext.prefix} && ${firebaseCommand}`,
+                options.projectRoot
+            );
+            console.log(chalk.green(`✅ Deployment started in elevated window for ${commandContext.projectId}.`));
+            return true;
+        } catch (e: any) {
+            console.log(chalk.red(`Deploy failed: ${e.message}`));
+            return false;
+        }
+    }
 
     /**
      * Bump version in pubspec.yaml
@@ -293,50 +361,119 @@ export class ReleaseManager {
     }
 
     static async deployRules(projectRoot: string): Promise<void> {
-        console.log(chalk.cyan('\n🔒 Deploying Firebase Security Rules & Indexes...'));
-        if (!await ProcessUtils.checkCommand('firebase')) {
-            console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+        const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
+        if (!await fs.pathExists(firebaseJsonPath)) {
+            console.log(chalk.red('Deploy blocked: firebase.json was not found in the project root.'));
             return;
         }
-        try {
-            const { ProcessManager } = await import('../core/process-manager');
-            await ProcessManager.spawnElevatedDetachedWindow('Deploy Firebase Rules', 'firebase deploy --only firestore:rules,firestore:indexes,storage,database', projectRoot);
-            console.log(chalk.green('✅ Deployment started in elevated window.'));
-        } catch (e: any) {
-            console.log(chalk.red(`Deploy failed: ${e.message}`));
-        }
+
+        await this.launchFirebaseDeployWindow({
+            title: 'Deploy Firebase Rules',
+            projectRoot,
+            firebaseArgs: ['deploy', '--only', 'firestore:rules,firestore:indexes,storage,database'],
+            intro: '🔒 Deploying Firebase Security Rules & Indexes...'
+        });
     }
 
     static async deployFunctionsAPI(projectRoot: string): Promise<void> {
-        console.log(chalk.cyan('\n☁️  Deploying Cloud Functions to Firebase...'));
-        console.log(chalk.gray('  (Dashboard is deployed automatically by Vercel on git push)'));
-        if (!await ProcessUtils.checkCommand('firebase')) {
-            console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+        const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
+        if (!await fs.pathExists(firebaseJsonPath)) {
+            console.log(chalk.red('Deploy blocked: firebase.json was not found in the project root.'));
             return;
         }
-        try {
-            const { ProcessManager } = await import('../core/process-manager');
-            await ProcessManager.spawnElevatedDetachedWindow('Deploy Cloud Functions', 'firebase deploy --only functions', projectRoot);
-            console.log(chalk.green('✅ Deployment started in elevated window.'));
-        } catch (e: any) {
-            console.log(chalk.red(`Deploy failed: ${e.message}`));
+
+        if (detectFramework(projectRoot) === 'nextjs') {
+            console.log(chalk.gray('  Next.js web deploys remain separate from Firebase Functions deploys.'));
         }
+
+        await this.launchFirebaseDeployWindow({
+            title: 'Deploy Cloud Functions',
+            projectRoot,
+            firebaseArgs: ['deploy', '--only', 'functions'],
+            intro: '☁️  Deploying Cloud Functions to Firebase...'
+        });
     }
 
     static async deployAllFirebase(projectRoot: string): Promise<void> {
-        console.log(chalk.cyan('\n🌟 Deploying Everything to Firebase (excl. hosting)...'));
-        console.log(chalk.gray('  (Dashboard is deployed automatically by Vercel on git push)'));
-        if (!await ProcessUtils.checkCommand('firebase')) {
-            console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+        const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
+        if (!await fs.pathExists(firebaseJsonPath)) {
+            console.log(chalk.red('Deploy blocked: firebase.json was not found in the project root.'));
             return;
         }
-        try {
-            const { ProcessManager } = await import('../core/process-manager');
-            await ProcessManager.spawnElevatedDetachedWindow('Deploy All Firebase', 'firebase deploy --only functions,firestore,storage', projectRoot);
-            console.log(chalk.green('✅ Deployment started in elevated window.'));
-        } catch (e: any) {
-            console.log(chalk.red(`Deploy failed: ${e.message}`));
+
+        const framework = detectFramework(projectRoot);
+        if (framework === 'flutter') {
+            console.log(chalk.cyan('\n🌟 Deploying Firebase backend services (functions, rules, storage)...'));
+            console.log(chalk.gray('  Flutter web hosting is deployed separately from the platform deploy targets below.'));
+        } else if (framework === 'nextjs') {
+            console.log(chalk.cyan('\n🌟 Deploying Firebase backend services (functions, rules, storage)...'));
+            console.log(chalk.gray('  Next.js web deploys remain on the web platform workflow.'));
+        } else {
+            console.log(chalk.cyan('\n🌟 Deploying Everything to Firebase (excl. hosting)...'));
         }
+
+        await this.launchFirebaseDeployWindow({
+            title: 'Deploy All Firebase',
+            projectRoot,
+            firebaseArgs: ['deploy', '--only', 'functions,firestore,storage'],
+            intro: '🌟 Deploying Firebase backend services...'
+        });
+    }
+
+    static async deployWeb(projectRoot: string): Promise<void> {
+        const framework = detectFramework(projectRoot);
+
+        if (framework === 'nextjs') {
+            console.log(chalk.cyan('\n🌐 Next.js web deployments currently target Vercel.'));
+            console.log(chalk.gray('  Use your Vercel project workflow for production deploys in Next.js mode.'));
+            return;
+        }
+
+        const firebaseJsonPath = path.join(projectRoot, 'firebase.json');
+        if (!await fs.pathExists(firebaseJsonPath)) {
+            console.log(chalk.red('Deploy blocked: firebase.json was not found in the project root.'));
+            return;
+        }
+
+        if (framework === 'flutter') {
+            const commandContext = this.buildFirebaseCommandPrefix(projectRoot);
+            if (!commandContext.ok) {
+                console.log(chalk.red(`Deploy blocked: ${commandContext.error}`));
+                return;
+            }
+
+            if (!await ProcessUtils.checkCommand('firebase')) {
+                console.log(chalk.red('Firebase CLI Not Found. Skipping deploy.'));
+                return;
+            }
+
+            try {
+                const { ProcessManager } = await import('../core/process-manager');
+                const buildAndDeployCommand = [
+                    commandContext.prefix,
+                    'flutter build web --release --no-wasm-dry-run',
+                    `firebase deploy --only hosting --project "${this.quoteForCmd(commandContext.projectId)}" --non-interactive`
+                ].join(' && ');
+
+                console.log(chalk.cyan('\n🌐 Deploying Flutter web to Firebase Hosting...'));
+                await ProcessManager.spawnElevatedDetachedWindow(
+                    'Deploy Flutter Web',
+                    buildAndDeployCommand,
+                    projectRoot
+                );
+                console.log(chalk.green(`✅ Flutter web deployment started in elevated window for ${commandContext.projectId}.`));
+            } catch (e: any) {
+                console.log(chalk.red(`Deploy failed: ${e.message}`));
+            }
+            return;
+        }
+
+        await this.launchFirebaseDeployWindow({
+            title: 'Deploy Web Hosting',
+            projectRoot,
+            firebaseArgs: ['deploy', '--only', 'hosting'],
+            intro: '🌐 Deploying web hosting...'
+        });
     }
 
     static async deployAll(projectRoot: string): Promise<void> {
