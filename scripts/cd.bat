@@ -8,10 +8,13 @@ set "EXIT_CODE=0"
 set "BUN_EXE="
 set "VER_INPUT="
 set "LATEST_TAG="
+set "LATEST_BASE_VERSION="
 set "CHANNEL_INPUT="
 set "ITERATION_INPUT="
+set "NEXT_ITERATION=1"
 set "TAG="
 set "COMMIT_MESSAGE="
+set "BLANK_VERSION_SELECTED=0"
 
 cls
 echo  __    __   __     ______     __  __     __   __     __  __
@@ -41,6 +44,7 @@ echo [OK] GitHub CLI and Git are ready.
 echo.
 
 call :GET_LATEST_VERSION
+call :GET_BASE_VERSION_FROM_TAG "%LATEST_TAG%"
 if not "%LATEST_TAG%"=="" (
     echo Current latest release tag: %LATEST_TAG%
 ) else (
@@ -52,11 +56,15 @@ echo.
 set "VER_INPUT="
 set "CHANNEL_INPUT="
 set "ITERATION_INPUT="
-set /p VER_INPUT="Enter version in the form 0.0.0 (leave blank to republish latest): "
+set "BLANK_VERSION_SELECTED=0"
+set /p VER_INPUT="Enter version in the form 0.0.0 (leave blank to reuse the latest base version): "
 if "%VER_INPUT%"=="" (
-    if not "%LATEST_TAG%"=="" (
-        set "TAG=%LATEST_TAG%"
-        goto :PROMPT_COMMIT
+    if not "%LATEST_BASE_VERSION%"=="" (
+        set "VER_INPUT=%LATEST_BASE_VERSION%"
+        set "BLANK_VERSION_SELECTED=1"
+        echo Using latest base version: %VER_INPUT%
+        echo.
+        goto :ASK_CHANNEL
     )
     echo [WARN] No latest release exists yet, so enter a version manually.
     echo.
@@ -71,6 +79,7 @@ if errorlevel 1 (
     goto :ASK_VER
 )
 
+:ASK_CHANNEL
 echo.
 set /p CHANNEL_INPUT="Release channel: alpha [a], beta [b], or leave blank for production: "
 for /f "tokens=* delims= " %%A in ("%CHANNEL_INPUT%") do set "CHANNEL_INPUT=%%A"
@@ -86,11 +95,10 @@ echo.
 goto :ASK_VER
 
 :ASK_ALPHA_ITERATION
-set /p ITERATION_INPUT="Enter alpha iteration number: "
+call :GET_NEXT_ITERATION "%VER_INPUT%" "alpha"
+set /p ITERATION_INPUT="Enter alpha iteration number [%NEXT_ITERATION%]: "
 if "%ITERATION_INPUT%"=="" (
-    echo [WARN] Alpha releases require an iteration number.
-    echo.
-    goto :ASK_ALPHA_ITERATION
+    set "ITERATION_INPUT=%NEXT_ITERATION%"
 )
 powershell -NoProfile -Command "$n='%ITERATION_INPUT%'; if ($n -match '^[0-9]+$') { exit 0 } else { exit 1 }"
 if errorlevel 1 (
@@ -102,11 +110,10 @@ set "TAG=v%VER_INPUT%-alpha.%ITERATION_INPUT%"
 goto :PROMPT_COMMIT
 
 :ASK_BETA_ITERATION
-set /p ITERATION_INPUT="Enter beta iteration number: "
+call :GET_NEXT_ITERATION "%VER_INPUT%" "beta"
+set /p ITERATION_INPUT="Enter beta iteration number [%NEXT_ITERATION%]: "
 if "%ITERATION_INPUT%"=="" (
-    echo [WARN] Beta releases require an iteration number.
-    echo.
-    goto :ASK_BETA_ITERATION
+    set "ITERATION_INPUT=%NEXT_ITERATION%"
 )
 powershell -NoProfile -Command "$n='%ITERATION_INPUT%'; if ($n -match '^[0-9]+$') { exit 0 } else { exit 1 }"
 if errorlevel 1 (
@@ -149,6 +156,7 @@ if not errorlevel 1 goto :TAG_EXISTS
 goto :CREATE_TAG
 
 :TAG_EXISTS
+if "%BLANK_VERSION_SELECTED%"=="1" if /i not "%TAG%"=="%LATEST_TAG%" goto :TAG_EXISTS_NOT_LATEST
 echo [WARN] Tag %TAG% already exists locally or remotely.
 echo        Deleting the old release and republishing it from the current build.
 git tag -d %TAG% >nul 2>nul
@@ -163,9 +171,11 @@ git push origin %TAG%
 if errorlevel 1 goto :TAG_PUSH_FAILED
 
 echo.
-echo [5/6] GitHub Actions will build and publish installers for %TAG%.
+echo [5/6] Waiting for the GitHub release to appear...
+call :WAIT_FOR_RELEASE "%TAG%"
+if errorlevel 1 goto :RELEASE_WAIT_FAILED
 echo.
-echo [SUCCESS] Tag %TAG% pushed.
+echo [SUCCESS] Release %TAG% is live.
 echo [6/6] The latest branch push is now available for Vercel's dashboard deployment hooks.
 echo Track the workflow at: https://github.com/KffeePt/vishnu/actions/workflows/release.yml
 echo Latest stable downloads:
@@ -201,6 +211,22 @@ exit /b 0
 set "LATEST_TAG="
 for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null; if ($tag) { $tag }"`) do set "LATEST_TAG=%%V"
 exit /b 0
+
+:GET_BASE_VERSION_FROM_TAG
+set "LATEST_BASE_VERSION="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%~1'; if ($tag -match '^v(\d+\.\d+\.\d+)(?:-(?:alpha|beta)\.\d+)?$') { Write-Output $matches[1] }"`) do set "LATEST_BASE_VERSION=%%V"
+exit /b 0
+
+:GET_NEXT_ITERATION
+set "NEXT_ITERATION=1"
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$version='%~1'; $channel='%~2'; $escaped=[regex]::Escape($version); $pattern='^v' + $escaped + '-' + $channel + '\.(\d+)$'; $tags = gh release list --limit 1000 --json tagName --jq '.[].tagName' 2>$null; $max = 0; foreach ($tag in ($tags -split \"`r?`n\")) { if ($tag -match $pattern) { $candidate = [int]$matches[1]; if ($candidate -gt $max) { $max = $candidate } } }; Write-Output ($max + 1)"`) do set "NEXT_ITERATION=%%V"
+exit /b 0
+
+:WAIT_FOR_RELEASE
+set "RELEASE_READY="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%~1'; $deadline=(Get-Date).AddMinutes(10); do { try { $raw = gh release view $tag --json tagName,assets 2>$null; if ($LASTEXITCODE -eq 0 -and $raw) { $release = $raw | ConvertFrom-Json; $count = @($release.assets).Count; if ($count -ge 2) { Write-Host ('Release assets detected: ' + $count); Write-Output 'ready'; exit 0 } } } catch { }; Start-Sleep -Seconds 10 } while ((Get-Date) -lt $deadline); exit 1"`) do set "RELEASE_READY=%%V"
+if /i "%RELEASE_READY%"=="ready" exit /b 0
+exit /b 1
 
 :GH_MISSING
 echo [FAIL] GitHub CLI gh not found.
@@ -244,6 +270,20 @@ goto :END
 
 :TAG_PUSH_FAILED
 echo [FAIL] Failed to push tag to origin.
+set "EXIT_CODE=1"
+goto :END
+
+:TAG_EXISTS_NOT_LATEST
+echo [FAIL] Tag %TAG% already exists, but it is not the latest published release.
+echo        Leaving the version blank only republishes the latest exact tag.
+echo        Choose a different channel or iteration to create a new release,
+echo        or type the exact version manually if you want to republish an older tag.
+set "EXIT_CODE=1"
+goto :END
+
+:RELEASE_WAIT_FAILED
+echo [FAIL] Timed out waiting for GitHub to create the release or upload its assets.
+echo        Check the workflow run and release page for %TAG%.
 set "EXIT_CODE=1"
 goto :END
 

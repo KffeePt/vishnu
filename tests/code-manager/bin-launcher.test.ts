@@ -1,3 +1,4 @@
+import os from 'os';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,8 +38,8 @@ describe('vishnu launcher bootstrap', () => {
         );
 
         expect(spawn).toHaveBeenCalledWith(
-            'npx',
-            ['tsx', path.join(process.cwd(), 'codeman', 'interactive-cli.ts')],
+            path.join(os.homedir(), '.bun', 'bin', 'bun.exe'),
+            ['x', 'tsx', path.join(process.cwd(), 'codeman', 'interactive-cli.ts')],
             expect.objectContaining({
                 cwd: process.cwd(),
                 shell: true,

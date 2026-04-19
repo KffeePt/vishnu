@@ -26,6 +26,11 @@ export const SettingsMenuDef: MenuDefinition = {
                 label: '⏱️  Global Session Timers (Read Only)',
                 value: 'session-timers',
                 action: { type: 'script', handler: 'viewSessionTimers' }
+            },
+            {
+                label: '🛡️  Verify Integrity',
+                value: 'verify-integrity',
+                action: { type: 'script', handler: 'verifyIntegrity' }
             }
         ];
 

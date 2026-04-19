@@ -20,6 +20,7 @@
 #include <memory>
 #include <array>
 #include <sstream>
+#include <cstring>
 
 namespace fs = std::filesystem;
 using namespace std;
@@ -31,6 +32,7 @@ using namespace std;
 const string INSTALLER_VERSION = INSTALLER_VERSION_STR;
 const string STABLE_BRANCH = "stable";
 const string STABLE_DOWNLOAD_URL_WINDOWS = "https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.exe";
+const string PUBLIC_REPO_CLONE_URL = "https://github.com/KffeePt/vishnu.git";
 
 
 // --- Colors ---
@@ -335,6 +337,14 @@ string getGitHubPath() {
     return ghPath.string();
 }
 
+string getProgramFilesPath() {
+    const char* programFiles = getenv("ProgramFiles");
+    if (programFiles && strlen(programFiles) > 0) {
+        return string(programFiles);
+    }
+    return "C:\\Program Files";
+}
+
 fs::path getInstallConfigPath() {
     const char* userProfile = getenv("USERPROFILE");
     string home = userProfile ? string(userProfile) : ".";
@@ -446,7 +456,7 @@ bool createCodemanShortcut(const fs::path& repoPath) {
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, reinterpret_cast<void**>(&shellLink));
     if (SUCCEEDED(hr)) {
         const string args = "-NoExit -ExecutionPolicy Bypass -Command \"Set-Location -LiteralPath '" +
-            escapePowerShellLiteral(repoPath.string()) + "'; codeman\"";
+            escapePowerShellLiteral(repoPath.string()) + "'; node .\\bin\\vishnu.js\"";
         const fs::path iconPath = repoPath / "assets" / "icon.ico";
 
         shellLink->SetPath(L"powershell.exe");
@@ -520,8 +530,7 @@ int main() {
 
     try {
         // --- 1. System Maintenance Scope (Vishnu) ---
-        string ghPath = getGitHubPath();
-        fs::path vishnuPath = fs::path(ghPath) / "vishnu";
+        fs::path vishnuPath = fs::path(getProgramFilesPath()) / "Vishnu";
         bool isInstalled = fs::exists(vishnuPath);
 
         // Pre-flight check
@@ -596,25 +605,19 @@ int main() {
 
         // --- INSTALL / UPDATE FLOW (Selection 0) ---
         
-        // Setup SSH
-        setupSSH(); 
-
         log("\n[Installer] Setting up Vishnu System...", BLUE);
-        
-        // Ensure we are in GitHub folder for this part
-        fs::current_path(ghPath);
 
         bool sourceReady = false;
         string targetTag;
         string targetVersion;
 
-        if (fs::exists("vishnu")) {
-             log("[INFO] 'vishnu' directory found.", GREEN);
+        if (fs::exists(vishnuPath)) {
+             log("[INFO] Existing Vishnu install directory found.", GREEN);
              sourceReady = true;
         } else {
-             // Clone
-             log("Cloning Vishnu System into " + fs::current_path().string() + "...", CYAN);
-             if (runCommand("git clone git@github.com:KffeePt/vishnu.git vishnu")) {
+             log("Cloning Vishnu System into " + vishnuPath.string() + "...", CYAN);
+             fs::create_directories(vishnuPath.parent_path());
+             if (runCommand("git clone " + PUBLIC_REPO_CLONE_URL + " \"" + vishnuPath.string() + "\"")) {
                  sourceReady = true;
              }
         }
@@ -657,26 +660,20 @@ int main() {
 
         // NPM Install & Link
         log("Checking dependencies...", CYAN);
-        
-        string installCmd = "cd \"" + vishnuPath.string() + "\" && npm install";
-        if(!runCommand(installCmd)) {
-             log("[FAIL] npm install failed.", RED);
-             pauseExit();
+        const bool bunAvailable = runCommand("bun --version >nul 2>&1");
+        if (!bunAvailable) {
+            log("[WARN] Bun was not found. Falling back to npm install for this machine.", YELLOW);
         }
 
-        log("\n[Link] Exposing global command...", BLUE);
-        runCommand("npm unlink -g vishnu-system >nul 2>&1");
-        
-        string linkCmd = "cd \"" + vishnuPath.string() + "\" && npm link";
-        if(!runCommand(linkCmd)) {
-            log("[FAIL] npm link failed.", RED);
-            pauseExit();
+        string installCmd = "cd \"" + vishnuPath.string() + "\" && ";
+        installCmd += bunAvailable ? "bun install --frozen-lockfile" : "npm install";
+        if(!runCommand(installCmd)) {
+             log("[FAIL] Dependency installation failed.", RED);
+             pauseExit();
         }
-        
-        log("[OK] CodeMan linked globally.", GREEN);
         const bool shortcutCreated = createCodemanShortcut(vishnuPath);
         if (shortcutCreated) {
-            log("[OK] Start Menu shortcut created: codeman", GREEN);
+            log("[OK] Start Menu shortcut created: Vishnu Codeman", GREEN);
         } else {
             log("[WARN] Could not create the Start Menu shortcut.", YELLOW);
         }
@@ -686,14 +683,14 @@ int main() {
         system("cls");
         printHeader();
         cout << GREEN << "=== VISHNU SYSTEM SETUP COMPLETE ===" << RESET << endl << endl;
-        cout << "1. SSH Setup:       " << GREEN << "OK" << RESET << endl;
+        cout << "1. Install Root:    " << GREEN << vishnuPath.string() << RESET << endl;
         cout << "2. System Install:  " << GREEN << "OK" << RESET << endl;
-        cout << "3. Global Link:     " << GREEN << "OK" << RESET << endl;
+        cout << "3. Runtime Setup:   " << GREEN << (bunAvailable ? "Bun" : "npm fallback") << RESET << endl;
         cout << "4. Release Channel: " << GREEN << targetTag << RESET << endl;
         cout << "5. Start Menu Link: " << (shortcutCreated ? GREEN + string("OK") : YELLOW + string("WARN")) << RESET << endl;
         cout << endl;
-        cout << "You can now run 'codeman' from any terminal." << endl;
-        cout << "You can also launch 'codeman' from the Windows Start Menu." << endl;
+        cout << "Vishnu is installed under Program Files and can be launched from the Windows Start Menu." << endl;
+        cout << "The shortcut opens the Vishnu Codeman TUI in PowerShell with the bundled icon." << endl;
         cout << "The first time you run it in a new project, it will guide you through setup." << endl;
         cout << endl;
         

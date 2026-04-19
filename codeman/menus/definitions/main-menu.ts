@@ -41,6 +41,11 @@ async function getLauncherOptions(s: GlobalState): Promise<MenuOption[]> {
             value: 'create-project',
             action: { type: 'navigate', target: 'create-project' }
         },
+        {
+            label: '🌐 Open Dashboard',
+            value: 'open-dashboard',
+            action: { type: 'script', handler: 'openDashboard' }
+        },
         { label: '---', value: 'sep2', type: 'separator' },
         {
             label: '⚙️  Settings',

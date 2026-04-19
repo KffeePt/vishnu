@@ -24,8 +24,24 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
+echo [INFO] Writing SHA-256 manifests...
+powershell -NoProfile -Command "$sha = [System.Security.Cryptography.SHA256]::Create(); $stream = [System.IO.File]::OpenRead('output\vishnu-installer.exe'); try { $hash = ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) -join ''; [System.IO.File]::WriteAllText('output\vishnu-installer.exe.sha256', $hash + ' *vishnu-installer.exe') } finally { $stream.Dispose(); $sha.Dispose() }"
+if %errorlevel% neq 0 (
+    echo [FAIL] Failed to write vishnu-installer.exe.sha256
+    popd
+    exit /b %errorlevel%
+)
+powershell -NoProfile -Command "$sha = [System.Security.Cryptography.SHA256]::Create(); $stream = [System.IO.File]::OpenRead('output\vishnu-installer.sh'); try { $hash = ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) -join ''; [System.IO.File]::WriteAllText('output\vishnu-installer.sh.sha256', $hash + ' *vishnu-installer.sh') } finally { $stream.Dispose(); $sha.Dispose() }"
+if %errorlevel% neq 0 (
+    echo [FAIL] Failed to write vishnu-installer.sh.sha256
+    popd
+    exit /b %errorlevel%
+)
+
 echo [SUCCESS] Build complete.
 echo    - output/vishnu-installer.exe
 echo    - output/vishnu-installer.sh
+echo    - output/vishnu-installer.exe.sha256
+echo    - output/vishnu-installer.sh.sha256
 
 popd

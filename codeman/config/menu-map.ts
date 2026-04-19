@@ -113,6 +113,27 @@ registerScript('openSyncPss', async () => {
     return 'settings';
 });
 
+registerScript('openDashboard', async () => {
+    const open = (await import('open')).default;
+    const dashboardUrl = 'https://vishnu-ruddy-tau.vercel.app';
+    try {
+        await open(dashboardUrl, { wait: false });
+        console.log(chalk.green(`\n🌐 Opening dashboard: ${dashboardUrl}`));
+    } catch {
+        console.log(chalk.yellow(`\nOpen this URL in your browser: ${dashboardUrl}`));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return 'ROOT';
+});
+
+registerScript('verifyIntegrity', async () => {
+    const inquirer = (await import('inquirer')).default;
+    const { runIntegrityViewer } = await import('../core/integrity');
+    await runIntegrityViewer();
+    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Press Enter to return...' }]);
+    return 'settings';
+});
+
 registerScript('toggleCloudFeatures', async () => {
     const configPath = path.join(process.cwd(), '.codeman.json');
     let config: any = {};
@@ -2473,7 +2494,6 @@ registerScript('listApiJobs', async () => {
 // --- Maintenance Deploy Logic Handlers ---
 registerScript('maintDeployAll', async () => {
     const { ProcessManager } = await import('../core/process-manager');
-    const inquirer = (await import('inquirer')).default;
     const chalk = (await import('chalk')).default;
     const path = (await import('path')).default;
     const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : process.cwd();
@@ -2484,7 +2504,8 @@ registerScript('maintDeployAll', async () => {
         'set "VISHNU_NO_PAUSE=1" && call scripts\\cd.bat',
         vishnuRoot
     );
-    await inquirer.prompt([{ type: 'input', name: 'c', message: 'Deployment window launched. Press Enter...' }]);
+    console.log(chalk.green('Deployment window launched. Returning to the menu...'));
+    await new Promise((resolve) => setTimeout(resolve, 700));
     return 'maint-deploy-menu';
 });
 

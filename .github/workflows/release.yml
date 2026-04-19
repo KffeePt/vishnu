@@ -75,7 +75,36 @@ PY
       with:
         name: vishnu-installer.sh
         path: setup/output/
-        
+
+    - name: Normalize release assets
+      run: |
+        chmod +x setup/output/vishnu-installer.sh
+        sha256sum setup/output/vishnu-installer.exe > setup/output/vishnu-installer.exe.sha256
+        sha256sum setup/output/vishnu-installer.sh > setup/output/vishnu-installer.sh.sha256
+
+    - name: Import release signing key
+      if: ${{ secrets.VISHNU_GPG_PRIVATE_KEY != '' }}
+      env:
+        VISHNU_GPG_PRIVATE_KEY: ${{ secrets.VISHNU_GPG_PRIVATE_KEY }}
+      run: |
+        export GNUPGHOME="$(mktemp -d)"
+        printf '%s' "$VISHNU_GPG_PRIVATE_KEY" | gpg --batch --import
+        gpg --batch --list-secret-keys
+        echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+
+    - name: Sign release assets
+      if: ${{ secrets.VISHNU_GPG_PRIVATE_KEY != '' }}
+      env:
+        VISHNU_GPG_PASSPHRASE: ${{ secrets.VISHNU_GPG_PASSPHRASE }}
+      run: |
+        gpg --batch --yes --pinentry-mode loopback --passphrase "$VISHNU_GPG_PASSPHRASE" --armor --detach-sign setup/output/vishnu-installer.exe
+        gpg --batch --yes --pinentry-mode loopback --passphrase "$VISHNU_GPG_PASSPHRASE" --armor --detach-sign setup/output/vishnu-installer.sh
+
+    - name: Warn when signing secrets are missing
+      if: ${{ secrets.VISHNU_GPG_PRIVATE_KEY == '' }}
+      run: |
+        echo "::warning::VISHNU_GPG_PRIVATE_KEY is not configured. Release assets will include .sha256 files but no .asc signatures."
+
     - name: Create Stable Release
       if: ${{ !contains(github.ref_name, '-') }}
       uses: softprops/action-gh-release@v2
@@ -84,8 +113,7 @@ PY
         make_latest: true
         prerelease: false
         files: |
-          setup/output/vishnu-installer.exe
-          setup/output/vishnu-installer.sh
+          setup/output/*
 
     - name: Create Prerelease
       if: ${{ contains(github.ref_name, '-') }}
@@ -95,5 +123,51 @@ PY
         make_latest: false
         prerelease: true
         files: |
-          setup/output/vishnu-installer.exe
-          setup/output/vishnu-installer.sh
+          setup/output/*
+
+  deploy-functions:
+    needs: [create-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+
+    - name: Warn when Firebase deploy secrets are missing
+      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT == '' || secrets.VISHNU_FIREBASE_PROJECT_ID == '' }}
+      run: |
+        echo "::warning::Skipping Cloud Functions deploy because VISHNU_FIREBASE_SERVICE_ACCOUNT or VISHNU_FIREBASE_PROJECT_ID is not configured."
+
+    - name: Authenticate to Google Cloud
+      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT }}
+
+    - name: Install Firebase CLI
+      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      run: npm install -g firebase-tools
+
+    - name: Install root dependencies
+      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      run: bun install --frozen-lockfile
+
+    - name: Install Functions dependencies
+      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      working-directory: functions
+      run: npm ci
+
+    - name: Deploy Cloud Functions
+      if: ${{ secrets.VISHNU_FIREBASE_SERVICE_ACCOUNT != '' && secrets.VISHNU_FIREBASE_PROJECT_ID != '' }}
+      env:
+        GOOGLE_CLOUD_PROJECT: ${{ secrets.VISHNU_FIREBASE_PROJECT_ID }}
+        GCLOUD_PROJECT: ${{ secrets.VISHNU_FIREBASE_PROJECT_ID }}
+      run: firebase deploy --only functions --project "$GOOGLE_CLOUD_PROJECT" --non-interactive
