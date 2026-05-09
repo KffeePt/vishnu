@@ -1,15 +1,12 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
-import { defineSecret } from 'firebase-functions/params';
 import { createAppJwt, getInstallationToken, getUserOrgRole } from './github-app';
+import { getRuntimeConfigValue } from './runtime-config';
 
 // Initialize admin app if not already initialized
 if (!admin.apps.length) {
     admin.initializeApp();
 }
-
-const GITHUB_APP_ID = defineSecret('GITHUB_APP_ID');
-const GITHUB_APP_PRIVATE_KEY = defineSecret('GITHUB_APP_PRIVATE_KEY');
 
 type AccessRole =
     | 'owner'
@@ -137,7 +134,6 @@ export const verifyAccess = functions.https.onCall(async (data: any, context: fu
  * Note: Requires GitHub App/PAT integration logic (omitted or stubbed here).
  */
 export const syncClaims = functions
-  .runWith({ secrets: [GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY] })
   .https.onCall(async (data: any, context: functions.https.CallableContext) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be logged in.');
@@ -151,8 +147,21 @@ export const syncClaims = functions
     }
 
     try {
-        const appId = GITHUB_APP_ID.value();
-        const privateKey = GITHUB_APP_PRIVATE_KEY.value().replace(/\\n/g, '\n');
+        const appId = getRuntimeConfigValue({
+            envNames: ['GITHUB_APP_ID'],
+            configPath: ['github', 'app_id'],
+        });
+        const privateKey = getRuntimeConfigValue({
+            envNames: ['GITHUB_APP_PRIVATE_KEY'],
+            configPath: ['github', 'app_private_key'],
+            normalizeNewlines: true,
+        });
+        if (!appId || !privateKey) {
+            throw new functions.https.HttpsError(
+                'failed-precondition',
+                'GitHub App runtime credentials are not configured.'
+            );
+        }
         
         const jwt = createAppJwt(appId, privateKey);
         const token = await getInstallationToken(jwt);

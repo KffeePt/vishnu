@@ -141,7 +141,7 @@ export const AuthContextProvider = ({ children }: AuthContextProviderProps) => {
             if (response.status === 401) {
                 const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : '');
                 // Do not intercept auth-session checks
-                if (url.includes('/api/') && !url.includes('/api/auth/session')) {
+                if (url.includes('/api/') && !url.includes('/api/auth/session') && !url.includes('/api/session')) {
                     if (auth.currentUser) {
                         try {
                             // Try to force-refresh the Firebase token.

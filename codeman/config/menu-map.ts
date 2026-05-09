@@ -472,32 +472,6 @@ async function runSessionTimersScreen(options: { editable: boolean; returnTo: st
     while (true) {
         console.clear();
         printTimerConfigDetails('⏱️  Global Session Timers', SessionTimerManager.getConfig());
-        console.log(chalk.gray('This controls the live timers used by all clients that sync from RTDB.'));
-        if (!canEditTimers) {
-            console.log(chalk.yellow('\nRead-only mode: only the project owner can edit the global timers.'));
-        }
-
-        const activeSessions = SessionTimerManager.getActiveSessions();
-        console.log(chalk.bold('\nActive Sessions'));
-        if (activeSessions.length === 0) {
-            console.log(chalk.gray('  No active sessions reported yet.'));
-        } else {
-            activeSessions.slice(0, 6).forEach((session) => {
-                const owner = session.userEmail || session.uid || 'unknown';
-                const project = session.projectId || session.projectPath || 'unknown project';
-                const terminal = session.terminalLabel || session.terminalId || 'terminal unknown';
-                const remainingMs = Math.max(0, session.expiresAt - Date.now());
-                const statusColor = session.status === 'expired'
-                    ? chalk.redBright
-                    : remainingMs <= 60 * 1000
-                        ? chalk.yellowBright
-                        : chalk.greenBright;
-                console.log(`  ${statusColor(session.status)} ${chalk.bold(owner)} ${chalk.gray('•')} ${project} ${chalk.gray('•')} ${chalk.cyanBright(terminal)} ${chalk.gray('•')} ${Math.max(0, Math.floor(remainingMs / 1000))}s left`);
-            });
-            if (activeSessions.length > 6) {
-                console.log(chalk.gray(`  ... and ${activeSessions.length - 6} more`));
-            }
-        }
 
         const choices: Array<{ name: string; value: string }> = [
             { name: '🔄 Refresh from backend', value: 'refresh' }
@@ -562,10 +536,10 @@ async function runSessionTimersScreen(options: { editable: boolean; returnTo: st
                 name: 'timer',
                 message: 'Which timer do you want to edit?',
                 choices: [
-                    { name: `Project inactivity logout (${Math.max(1, Math.round(current.projectInactivityMs / 60000))} min)`, value: 'project' },
-                    { name: `Browser auth login timeout (${Math.max(1, Math.round(current.browserLoginTimeoutMs / 60000))} min)`, value: 'browser' },
-                    { name: `Owner bypass timeout (${Math.max(1, Math.round(current.ownerBypassTimeoutMs / 60000))} min)`, value: 'bypass' },
-                    { name: `Token refresh skew (${Math.max(1, Math.round(current.tokenRefreshSkewMs / 60000))} min)`, value: 'skew' },
+                    { name: `Interactive TUI inactivity lock (${Math.max(1, Math.round(current.projectInactivityMs / 60000))} min)`, value: 'project' },
+                    { name: `Auth browser window timeout (${Math.max(1, Math.round(current.browserLoginTimeoutMs / 60000))} min)`, value: 'browser' },
+                    { name: `Owner bypass reuse window (${Math.max(1, Math.round(current.ownerBypassTimeoutMs / 60000))} min)`, value: 'bypass' },
+                    { name: `Stored token refresh lead (${Math.max(1, Math.round(current.tokenRefreshSkewMs / 60000))} min)`, value: 'skew' },
                     { name: '⬅️  Cancel', value: 'cancel' }
                 ]
             }]).then((a) => a.timer);
@@ -575,10 +549,10 @@ async function runSessionTimersScreen(options: { editable: boolean; returnTo: st
             }
 
             const promptLabels: Record<string, { label: string; current: number }> = {
-                project: { label: 'Project inactivity logout', current: current.projectInactivityMs },
-                browser: { label: 'Browser auth login timeout', current: current.browserLoginTimeoutMs },
-                bypass: { label: 'Owner bypass timeout', current: current.ownerBypassTimeoutMs },
-                skew: { label: 'Token refresh skew', current: current.tokenRefreshSkewMs }
+                project: { label: 'Interactive TUI inactivity lock', current: current.projectInactivityMs },
+                browser: { label: 'Auth browser window timeout', current: current.browserLoginTimeoutMs },
+                bypass: { label: 'Owner bypass reuse window', current: current.ownerBypassTimeoutMs },
+                skew: { label: 'Stored token refresh lead', current: current.tokenRefreshSkewMs }
             };
 
             const selected = promptLabels[timerChoice];
@@ -608,7 +582,9 @@ async function runSessionTimersScreen(options: { editable: boolean; returnTo: st
 }
 
 registerScript('viewSessionTimers', async () => {
-    await runSessionTimersScreen({ editable: false, returnTo: 'settings' });
+    const { runGlobalTimersViewer } = await import('../core/session-timers');
+    await runGlobalTimersViewer();
+    return 'settings';
 });
 
 registerScript('manageSessionTimers', async () => {
@@ -2829,22 +2805,13 @@ registerScript('branchRemove', async () => {
 async function requireMaintenanceAccess(): Promise<boolean> {
     const { AuthService } = await import('../core/auth');
     const { state } = await import('../core/state');
-    const { UserConfigManager } = await import('../config/user-config');
-    const { AuthTokenStore } = await import('../core/auth/token-store');
     const { EnvSetupManager } = await import('../managers/env-setup');
+    const { SessionTimerManager } = await import('../core/session-timers');
     const chalk = (await import('chalk')).default;
     const path = (await import('path')).default;
     const { fileURLToPath } = await import('url');
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
-
-    // Maintenance should never inherit a prior session implicitly.
-    state.user = undefined;
-    state.authBypass = false;
-    state.rawIdToken = undefined;
-    UserConfigManager.clearAuthState();
-    UserConfigManager.clearAuthBypass();
-    AuthTokenStore.clear();
 
     console.log(chalk.magenta('\n🔒 Verifying Administrative Access...'));
     
@@ -2863,18 +2830,36 @@ async function requireMaintenanceAccess(): Promise<boolean> {
     // Switch context to Vishnu Root for Maintenance
     process.chdir(vishnuRoot);
     state.project.rootPath = vishnuRoot;
+    state.setProjectType('custom');
     
     const vishnuAuth = {
         projectId: vishnuBackend.projectId,
         apiKey: vishnuBackend.apiKey,
         authDomain: vishnuBackend.authDomain,
-        serviceAccount: vishnuBackend.serviceAccountPath
+        serviceAccount: vishnuBackend.serviceAccountPath,
+        accessControlProjectId: vishnuBackend.projectId,
+        roleSource: 'access-control-preferred' as const,
+        accessControlOptional: true,
+        requiredRoles: ['owner', 'admin']
     };
+
+    try {
+        await SessionTimerManager.refreshFromRemote({
+            projectId: vishnuBackend.projectId,
+            databaseURL: vishnuBackend.databaseURL
+        });
+        await SessionTimerManager.startRealtimeSync({
+            projectId: vishnuBackend.projectId,
+            databaseURL: vishnuBackend.databaseURL
+        });
+    } catch {
+        // Timer sync is best-effort here; auth should still proceed.
+    }
 
     const success = await AuthService.login(state, vishnuAuth);
     const currentUserRole = (state.user as { role?: string } | undefined)?.role;
 
-    if (success && currentUserRole === 'owner') {
+    if (success && (currentUserRole === 'owner' || currentUserRole === 'admin')) {
         state.project.rootPath = vishnuRoot;
         state.setProjectType('custom');
         return true;

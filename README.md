@@ -7,6 +7,7 @@
 ## 📚 Documentation
 - [Architecture Overview](docs/architecture/overview.md)
 - [Global Workflow](docs/architecture/global-workflow.md)
+- [Access Control Architecture](docs/architecture/access-control.md)
 - [Installer Behavior](docs/installer/behavior.md)
 - [Database & Auth Schema](docs/database/auth-schema.md)
 

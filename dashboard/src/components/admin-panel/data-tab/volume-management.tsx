@@ -31,7 +31,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -47,8 +47,6 @@ import { VolumeTestingSuite } from "./volume-testing-suite";
 import { FirestoreHealthPanel } from "./firestore-health-panel";
 import { FirestoreUsageMapDialog } from "./firestore-usage-map-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getDatabase, ref, onValue } from "firebase/database";
-import { app } from "@/config/firebase";
 
 interface VolumeDocument {
   id: string;
@@ -91,51 +89,12 @@ interface StaffOption {
   status?: string;
 }
 
-const JsonNode = ({ label, value, defaultOpen = false }: { label: string, value: any, defaultOpen?: boolean }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  const isObject = value !== null && typeof value === 'object';
-
-  if (!isObject) {
-    return (
-      <div className="flex items-center gap-2 py-1 pl-4 hover:bg-muted/50 rounded px-2">
-        <span className="font-medium text-emerald-700 min-w-32">{label}:</span>
-        <span className={typeof value === 'string' ? "text-amber-600" : typeof value === 'number' ? "text-blue-500" : "text-purple-500"}>
-          {typeof value === 'string' ? `"${value}"` : String(value)}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="pl-4">
-      <div
-        className="flex items-center gap-1 py-1 cursor-pointer hover:bg-muted/50 rounded px-2 select-none"
-        onClick={() => setIsOpen(!isOpen)}
-      >
-        {isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground stroke-[3]" /> : <ChevronRight className="w-4 h-4 text-muted-foreground stroke-[3]" />}
-        <span className="font-semibold text-indigo-700">{label}</span>
-        <span className="text-xs text-muted-foreground ml-2">
-          {Array.isArray(value) ? `[${value.length}]` : `{${Object.keys(value).length}}`}
-        </span>
-      </div>
-      {isOpen && (
-        <div className="border-l-2 border-muted ml-2 pb-1">
-          {Object.entries(value).map(([k, v]) => (
-            <JsonNode key={k} label={k} value={v} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
 export function VolumeManagement({ masterPassword, sessionToken }: { masterPassword?: string, sessionToken?: string }) {
   const { getIDToken, logOut } = UserAuth();
   const { toast } = useToast();
   const { authenticateMasterPassword, authenticateWithPasskey } = useAuthentication();
 
   const [activeTab, setActiveTab] = useState("encrypted");
-  const [rtdbData, setRtdbData] = useState<any>(null);
 
   const [volumeData, setVolumeData] = useState<VolumeSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -435,21 +394,6 @@ export function VolumeManagement({ masterPassword, sessionToken }: { masterPassw
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'rtdb') {
-      const rtdb = getDatabase(app);
-      const rootRef = ref(rtdb, '/');
-      const unsubscribe = onValue(rootRef, (snapshot) => {
-        if (snapshot.exists()) {
-          setRtdbData(snapshot.val());
-        } else {
-          setRtdbData(null);
-        }
-      });
-      return () => unsubscribe();
-    }
-  }, [activeTab]);
-
-  useEffect(() => {
     // Check if master password session is valid
     const sessionStr = sessionStorage.getItem('vishnu_admin_session');
     if (sessionStr) {
@@ -602,9 +546,9 @@ export function VolumeManagement({ masterPassword, sessionToken }: { masterPassw
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Main 3-Tab Viewer */}
+      {/* Main 2-Tab Viewer */}
       <Tabs defaultValue="encrypted" value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-1 md:grid-cols-3 mb-6">
+        <TabsList className="grid w-full grid-cols-1 md:grid-cols-2 mb-6">
           <TabsTrigger value="encrypted" className="flex items-center gap-2">
             <Lock className="w-4 h-4" />
             <span className="hidden sm:inline">Encrypted Volume Chunks</span>
@@ -614,11 +558,6 @@ export function VolumeManagement({ masterPassword, sessionToken }: { masterPassw
             <Globe className="w-4 h-4" />
             <span className="hidden sm:inline">Decrypted Data Explorer</span>
             <span className="sm:hidden">Decrypted</span>
-          </TabsTrigger>
-          <TabsTrigger value="rtdb" className="flex items-center gap-2">
-            <Database className="w-4 h-4" />
-            <span className="hidden sm:inline">RTDB Structure</span>
-            <span className="sm:hidden">RTDB</span>
           </TabsTrigger>
         </TabsList>
 
@@ -942,31 +881,6 @@ export function VolumeManagement({ masterPassword, sessionToken }: { masterPassw
         </TabsContent>
 
         {/* Tab 3: RTDB Structure Visualizer */}
-        <TabsContent value="rtdb" className="space-y-6">
-          <Card className="border-blue-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4 border-b bg-blue-50/50 rounded-t-lg">
-              <CardTitle className="flex items-center gap-2 text-blue-800">
-                <Database className="w-5 h-5" />
-                Sentinel RTDB Visualizer (Live)
-              </CardTitle>
-              <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300 animate-pulse">
-                Live Feed
-              </Badge>
-            </CardHeader>
-            <CardContent className="pt-6">
-              {!rtdbData ? (
-                <div className="text-center text-muted-foreground py-12">
-                  <Activity className="w-12 h-12 mx-auto mb-3 opacity-20 animate-pulse" />
-                  <p>Connecting to Realtime Database...</p>
-                </div>
-              ) : (
-                <div className="rounded-md border bg-zinc-50/50 p-4 max-h-[600px] overflow-auto font-mono text-sm shadow-inner">
-                  <JsonNode label="root" value={rtdbData} defaultOpen={true} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
       {/* Peek Dialog */}

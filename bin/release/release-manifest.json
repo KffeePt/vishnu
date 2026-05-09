@@ -1,7 +1,8 @@
 {
-  "tag": "v1.0.1-beta.5",
-  "version": "1.0.1-beta.5",
-  "builtAt": "2026-04-19T09:22:32.340Z",
+  "tag": "v1.0.2-beta.1",
+  "version": "1.0.2-beta.1",
+  "prerelease": true,
+  "builtAt": "2026-05-09T03:05:48.069Z",
   "assets": [
     "vishnu-installer.exe",
     "vishnu-installer.sh",

@@ -36,20 +36,49 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.paymentWebhook = exports.createSubscription = exports.createPayment = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
-const params_1 = require("firebase-functions/params");
 const mercadopago_1 = require("./mercadopago");
 const openpay_1 = require("./openpay");
 const fiverr_1 = require("./fiverr");
-const MERCADOPAGO_ACCESS_TOKEN = (0, params_1.defineSecret)("MERCADOPAGO_ACCESS_TOKEN");
-const OPENPAY_MERCHANT_ID = (0, params_1.defineSecret)("OPENPAY_MERCHANT_ID");
-const OPENPAY_PRIVATE_KEY = (0, params_1.defineSecret)("OPENPAY_PRIVATE_KEY");
+const runtime_config_1 = require("../runtime-config");
+function getMercadoPagoAccessToken() {
+    return (0, runtime_config_1.getRuntimeConfigValue)({
+        envNames: ["MERCADOPAGO_ACCESS_TOKEN"],
+        configPath: ["payments", "mercadopago_access_token"],
+    });
+}
+function getOpenPayMerchantId() {
+    return (0, runtime_config_1.getRuntimeConfigValue)({
+        envNames: ["OPENPAY_MERCHANT_ID"],
+        configPath: ["payments", "openpay_merchant_id"],
+    });
+}
+function getOpenPayPrivateKey() {
+    return (0, runtime_config_1.getRuntimeConfigValue)({
+        envNames: ["OPENPAY_PRIVATE_KEY"],
+        configPath: ["payments", "openpay_private_key"],
+        normalizeNewlines: true,
+    });
+}
 // Helper to instantiate gateways based on config/secrets
 function getGateway(name) {
     switch (name) {
         case "mercadopago":
-            return new mercadopago_1.MercadoPagoGateway(MERCADOPAGO_ACCESS_TOKEN.value() || "mock_token");
+            {
+                const token = getMercadoPagoAccessToken();
+                if (!token) {
+                    throw new functions.https.HttpsError("failed-precondition", "MercadoPago runtime credentials are not configured.");
+                }
+                return new mercadopago_1.MercadoPagoGateway(token);
+            }
         case "openpay":
-            return new openpay_1.OpenPayGateway(OPENPAY_MERCHANT_ID.value() || "mock_merchant", OPENPAY_PRIVATE_KEY.value() || "mock_key");
+            {
+                const merchantId = getOpenPayMerchantId();
+                const privateKey = getOpenPayPrivateKey();
+                if (!merchantId || !privateKey) {
+                    throw new functions.https.HttpsError("failed-precondition", "OpenPay runtime credentials are not configured.");
+                }
+                return new openpay_1.OpenPayGateway(merchantId, privateKey);
+            }
         case "fiverr":
             return new fiverr_1.FiverrGateway("https://www.fiverr.com/santiagomtz/mock-gig");
         default:
@@ -57,7 +86,6 @@ function getGateway(name) {
     }
 }
 exports.createPayment = functions
-    .runWith({ secrets: [MERCADOPAGO_ACCESS_TOKEN, OPENPAY_MERCHANT_ID, OPENPAY_PRIVATE_KEY] })
     .https.onCall(async (request) => {
     if (!request.auth)
         throw new functions.https.HttpsError("unauthenticated", "User must be logged in.");
@@ -79,7 +107,6 @@ exports.createPayment = functions
     return result;
 });
 exports.createSubscription = functions
-    .runWith({ secrets: [MERCADOPAGO_ACCESS_TOKEN, OPENPAY_MERCHANT_ID, OPENPAY_PRIVATE_KEY] })
     .https.onCall(async (request) => {
     if (!request.auth)
         throw new functions.https.HttpsError("unauthenticated", "User must be logged in.");
@@ -99,7 +126,6 @@ exports.createSubscription = functions
     return result;
 });
 exports.paymentWebhook = functions
-    .runWith({ secrets: [MERCADOPAGO_ACCESS_TOKEN, OPENPAY_MERCHANT_ID, OPENPAY_PRIVATE_KEY] })
     .https.onRequest(async (req, res) => {
     // Identify gateway from URL params (e.g. ?gw=mercadopago)
     const gatewayName = req.query.gw;

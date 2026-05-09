@@ -23,8 +23,15 @@ jobs:
         test -f bin/release/vishnu-installer.sh.asc
         chmod +x bin/release/vishnu-installer.sh
 
+    - name: Read release manifest
+      id: manifest
+      shell: bash
+      run: |
+        prerelease=$(node -e "const fs=require('fs'); const manifest=JSON.parse(fs.readFileSync('bin/release/release-manifest.json','utf8')); process.stdout.write(String(Boolean(manifest.prerelease)));")
+        echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
     - name: Create Stable Release
-      if: ${{ !contains(github.ref_name, '-') }}
+      if: ${{ steps.manifest.outputs.prerelease != 'true' }}
       uses: softprops/action-gh-release@v2
       with:
         generate_release_notes: true
@@ -34,7 +41,7 @@ jobs:
           bin/release/*
 
     - name: Create Prerelease
-      if: ${{ contains(github.ref_name, '-') }}
+      if: ${{ steps.manifest.outputs.prerelease == 'true' }}
       uses: softprops/action-gh-release@v2
       with:
         generate_release_notes: true
@@ -96,3 +103,9 @@ jobs:
         GOOGLE_CLOUD_PROJECT: ${{ env.FIREBASE_PROJECT_ID }}
         GCLOUD_PROJECT: ${{ env.FIREBASE_PROJECT_ID }}
       run: bunx firebase-tools deploy --only functions --project "$GOOGLE_CLOUD_PROJECT" --non-interactive
+
+    - name: Confirm Cloud Functions deployment
+      if: ${{ steps.firebase.outputs.configured == 'true' }}
+      env:
+        GOOGLE_CLOUD_PROJECT: ${{ env.FIREBASE_PROJECT_ID }}
+      run: echo "Cloud Functions deployed to Firebase project $GOOGLE_CLOUD_PROJECT."

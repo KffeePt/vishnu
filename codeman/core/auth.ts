@@ -9,6 +9,8 @@ import path from 'path';
 import fs from 'fs';
 import chalk from 'chalk';
 import { AuthTokenStore } from './auth/token-store';
+import { callAccessControlFunction } from './auth/access-control-client';
+import { clearAllLocalAuthArtifacts, purgeLegacyAuthArtifactsIfNeeded } from './auth-storage-migration';
 import { inferRoleFromClaims } from './security/role-verifier';
 import { SessionTimerManager } from './session-timers';
 import { MAX_BROWSER_SESSION_AGE_MS } from './auth/access-policy';
@@ -29,6 +31,10 @@ export interface AuthOptions {
     projectId?: string;
     apiKey?: string;
     authDomain?: string;
+    accessControlProjectId?: string | null;
+    roleSource?: 'access-control-preferred' | 'claims-only';
+    accessControlOptional?: boolean;
+    requiredRoles?: string[];
 }
 
 export interface LoginWindowStatus {
@@ -74,6 +80,10 @@ export class AuthService {
     }
 
     static async login(state: GlobalState, options: AuthOptions = {}): Promise<boolean> {
+        if (purgeLegacyAuthArtifactsIfNeeded()) {
+            console.log(chalk.yellow('\n🧹 Purged legacy local auth artifacts. Please sign in again.'));
+        }
+
         // Fast-path session restore
         const lastAuth = UserConfigManager.getLastAuth();
         const cachedUser = UserConfigManager.getCachedUser();
@@ -163,43 +173,65 @@ export class AuthService {
         const apiKey = options.apiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY;
         const projectId = targetProjectId || 'unknown-project';
         const globalReauthAt = SessionTimerManager.getConfig().forcedReauthAt || 0;
+        const requiredRolesLabel = Array.isArray(options.requiredRoles) && options.requiredRoles.length > 0
+            ? options.requiredRoles.join(' / ')
+            : 'any supported role';
 
         const resolveUserRole = async (decodedToken: admin.auth.DecodedIdToken, idToken: string): Promise<string | null> => {
             const email = decodedToken.email || 'unknown';
             const verdict = inferRoleFromClaims({ claims: decodedToken as any, email });
-            let userRole = verdict.role;
+            const claimsRole = verdict.role === 'none' ? null : verdict.role;
+            const requiredRoles = Array.isArray(options.requiredRoles)
+                ? options.requiredRoles.map((value) => value.trim()).filter(Boolean)
+                : [];
+            const isAllowedRole = (candidate: string | null | undefined) => {
+                if (!candidate) return false;
+                if (requiredRoles.length === 0) return true;
+                return requiredRoles.includes(candidate);
+            };
 
-            // Call verifyAccess Cloud Function to get latest truth
-            try {
-                const functionsBaseUrl = `https://us-central1-${projectId}.cloudfunctions.net`;
-                const cfResp = await fetch(`${functionsBaseUrl}/verifyAccess`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${idToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ data: {} }) // Callable CF format
-                });
-                if (cfResp.ok) {
-                    const cfData = await cfResp.json() as any;
-                    if (cfData.result?.authorized === true && cfData.result?.role) {
-                        userRole = cfData.result.role;
-                    } else if (cfData.result?.authorized === false) {
+            let userRole = claimsRole;
+            const roleSource = options.roleSource || 'access-control-preferred';
+            const accessControlProjectId = typeof options.accessControlProjectId === 'string'
+                ? options.accessControlProjectId.trim()
+                : projectId;
+            const allowBootstrapFallback = options.accessControlOptional !== false;
+
+            if (roleSource !== 'claims-only' && accessControlProjectId) {
+                try {
+                    const bootstrap = await callAccessControlFunction<{
+                        role?: string;
+                    }>({
+                        functionName: 'getAccessBootstrap',
+                        projectId: accessControlProjectId,
+                        idToken,
+                        data: {}
+                    });
+
+                    if (typeof bootstrap?.role === 'string' && bootstrap.role.trim() && bootstrap.role !== 'none') {
+                        userRole = bootstrap.role.trim();
+                    } else if (!allowBootstrapFallback) {
                         userRole = null;
                     }
-                } else {
-                    console.log(chalk.yellow(`[Auth] verifyAccess CF returned ${cfResp.status}`));
+                } catch (err) {
+                    const message = (err as Error).message;
+                    if (allowBootstrapFallback && claimsRole) {
+                        console.log(chalk.yellow(`[Auth] Central access bootstrap unavailable. Using verified token claims for ${email}. (${message})`));
+                        userRole = claimsRole;
+                    } else {
+                        console.log(chalk.red(`[Auth] Central access bootstrap failed: ${message}`));
+                        userRole = null;
+                    }
                 }
-            } catch (err) {
-                console.log(chalk.yellow(`[Auth] Failed to call verifyAccess CF: ${(err as Error).message}`));
             }
 
-            return userRole;
+            return isAllowedRole(userRole) ? userRole : null;
         };
 
         // Attempt token restore (and refresh) before opening browser
         const storedIdToken = await AuthTokenStore.getValidIdToken(apiKey, globalReauthAt, {
-            maxSessionAgeMs: MAX_BROWSER_SESSION_AGE_MS
+            maxSessionAgeMs: MAX_BROWSER_SESSION_AGE_MS,
+            refreshSkewMs: SessionTimerManager.getConfig().tokenRefreshSkewMs
         });
         if (storedIdToken) {
             try {
@@ -220,11 +252,13 @@ export class AuthService {
                     console.log(chalk.green('\n✅ Session restored from stored token.'));
                     return true;
                 }
+                clearAllLocalAuthArtifacts();
             } catch {
-                // Ignore and fall through to browser login
+                clearAllLocalAuthArtifacts();
             }
         } else if (lastAuth && cachedUser && (Date.now() - lastAuth < FIFTEEN_MINUTES)) {
             console.log(chalk.yellow('\n⚠️ Cached session found, but no valid token. Re-authentication required.'));
+            clearAllLocalAuthArtifacts();
         }
 
         this.loginWindowStartedAt = Date.now();
@@ -282,19 +316,19 @@ export class AuthService {
                                 const email = decodedToken.email || 'unknown';
                                 const userRole = await resolveUserRole(decodedToken, idToken);
 
-                                if (refreshToken) {
-                                    const effectiveExpiresAt = typeof expiresAt === 'number'
-                                        ? expiresAt
-                                        : (decodedToken.exp ? decodedToken.exp * 1000 : Date.now() + 55 * 60 * 1000);
-                                    AuthTokenStore.save({
-                                        firebaseIdToken: idToken,
-                                        refreshToken,
-                                        expiresAt: effectiveExpiresAt,
-                                        sessionStartedAt: decodedToken.auth_time ? decodedToken.auth_time * 1000 : Date.now()
-                                    });
-                                }
-
                                 if (userRole) {
+                                    if (refreshToken) {
+                                        const effectiveExpiresAt = typeof expiresAt === 'number'
+                                            ? expiresAt
+                                            : (decodedToken.exp ? decodedToken.exp * 1000 : Date.now() + 55 * 60 * 1000);
+                                        AuthTokenStore.save({
+                                            firebaseIdToken: idToken,
+                                            refreshToken,
+                                            expiresAt: effectiveExpiresAt,
+                                            sessionStartedAt: decodedToken.auth_time ? decodedToken.auth_time * 1000 : Date.now()
+                                        });
+                                    }
+
                                     const sessionUser = {
                                         email: email || 'unknown',
                                         uid: decodedToken.uid,
@@ -320,12 +354,13 @@ export class AuthService {
                                     console.log(chalk.red('\n🚫 ACCESS DENIED'));
                                     console.log(chalk.gray('------------------------------------------------'));
                                     console.log(chalk.white(`User: ${chalk.bold(email)}`));
-                                    console.log(chalk.yellow(`Status: Not Authorized (No Role Assigned)`));
+                                    console.log(chalk.yellow(`Status: Not Authorized (Requires ${requiredRolesLabel})`));
                                     console.log(chalk.gray('------------------------------------------------'));
-                                    console.log(chalk.cyan(`To fix this, assign a role to this user (custom claims) and retry login.\n`));
+                                    console.log(chalk.cyan(`To fix this, assign one of the required roles in that Firebase project and retry login.\n`));
 
                                     res.writeHead(403, { 'Content-Type': 'application/json' });
                                     res.end(JSON.stringify({ error: 'Unauthorized Role', email }));
+                                    clearAllLocalAuthArtifacts();
                                     this.closeServer();
                                     resolve(false);
                                 }

@@ -1,10 +1,12 @@
 import chalk from 'chalk';
+
 import { AuthService } from './auth';
 import { io } from './io';
 import { state } from './state';
 import { AuthTokenStore } from './auth/token-store';
 import { UserConfigManager } from '../config/user-config';
 import { SessionTimerManager, formatMs } from './session-timers';
+import { MAX_BROWSER_SESSION_AGE_MS } from './auth/access-policy';
 
 function formatRelativeTime(targetMs: number, now = Date.now()): string {
     const remaining = targetMs - now;
@@ -36,18 +38,44 @@ function colorForStatus(active: boolean, ms?: number) {
     return chalk.greenBright.bold;
 }
 
+function stripAnsi(input: string): string {
+    return input.replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function truncateText(value: string, maxWidth: number): string {
+    if (maxWidth <= 0) return '';
+    if (value.length <= maxWidth) return value;
+    if (maxWidth <= 1) return value.slice(0, maxWidth);
+    return `${value.slice(0, Math.max(0, maxWidth - 1))}…`;
+}
+
+function fitLine(line: string, width: number): string {
+    const plain = stripAnsi(line);
+    return plain.length <= width ? line : truncateText(plain, width);
+}
+
+function buildRule(width: number): string {
+    return chalk.gray('─'.repeat(Math.max(24, width)));
+}
+
+function buildFieldLine(label: string, value: string, width: number): string {
+    const prefix = `${chalk.bold(label)} `;
+    const available = Math.max(8, width - stripAnsi(prefix).length);
+    return fitLine(`${prefix}${truncateText(value, available)}`, width);
+}
+
+function buildBulletLine(label: string, value: string, width: number): string {
+    const prefix = `  ${chalk.bold(label)} `;
+    const available = Math.max(8, width - stripAnsi(prefix).length);
+    return fitLine(`${prefix}${truncateText(value, available)}`, width);
+}
+
 function describeSessionPresence(session: ReturnType<typeof SessionTimerManager.getActiveSessions>[number], now: number) {
     const remaining = session.expiresAt - now;
-    const statusColor = session.status === 'expired'
-        ? chalk.redBright
-        : remaining <= 60 * 1000
-            ? chalk.yellowBright
-            : chalk.greenBright;
     const ownerLabel = session.userEmail || session.uid || 'unknown';
     const projectLabel = session.projectId || session.projectPath || 'unknown project';
     const terminalLabel = session.terminalLabel || session.terminalId || 'terminal unknown';
-
-    return `${statusColor(session.status.padEnd(7))} ${chalk.bold(ownerLabel)} ${chalk.gray('•')} ${projectLabel} ${chalk.gray('•')} ${chalk.cyanBright(terminalLabel)} ${chalk.gray('•')} ${formatMs(Math.max(0, remaining))} left`;
+    return `${session.status.padEnd(7)} ${ownerLabel} • ${projectLabel} • ${terminalLabel} • ${formatMs(Math.max(0, remaining))} left`;
 }
 
 export function buildSessionInfo(now = Date.now()) {
@@ -81,6 +109,7 @@ export function buildSessionInfo(now = Date.now()) {
         loginWindow,
         storedTokens,
         storedTokenRemainingMs: storedTokens ? Math.max(0, storedTokens.expiresAt - now) : 0,
+        sharedServerSessionMaxAgeMs: MAX_BROWSER_SESSION_AGE_MS,
         timers
     };
 }
@@ -91,6 +120,8 @@ export function printSessionInfo(now = Date.now()) {
 
 export function buildSessionInfoText(now = Date.now()) {
     const info = buildSessionInfo(now);
+    const width = Math.max(72, Math.min(process.stdout.columns || 100, 110));
+    const height = Math.max(18, (process.stdout.rows || 30) - 1);
     const userLabel = info.cachedUser?.email || state.user?.email || 'not signed in';
     const bypassActive = info.authMode === 'owner-bypass' && info.bypassExpiresAt > now;
     const inactivityColor = colorForRemaining(info.inactivityRemainingMs);
@@ -99,104 +130,205 @@ export function buildSessionInfoText(now = Date.now()) {
     const tokenColor = colorForStatus(!!info.storedTokens, info.storedTokenRemainingMs);
     const authAgeColor = info.lastAuthAgeMs > 30 * 60 * 1000 ? chalk.yellowBright : chalk.cyanBright;
     const activityAgeColor = info.lastActivity > 0 && now - info.lastActivity > 10 * 60 * 1000 ? chalk.yellowBright : chalk.cyanBright;
-    const timerSourceColor = info.timers.syncActive ? chalk.greenBright : chalk.yellowBright;
     const activeSessions = SessionTimerManager.getActiveSessions();
     const reauthMarker = info.timers.forcedReauthAt > 0 ? new Date(info.timers.forcedReauthAt).toLocaleString() : 'inactive';
+    const projectName = info.projectRoot.split(/[\\/]/).filter(Boolean).pop() || info.projectRoot;
+    const authStateLabel = bypassActive
+        ? 'Owner bypass active'
+        : (state.user?.email || info.cachedUser?.email ? 'Authenticated' : 'Not authenticated');
+    const sourceLabel = `${stripAnsi(info.timers.sourceLabel)}${info.timers.syncActive ? ' (live)' : ' (cached)'}`;
 
     const lines: string[] = [];
-    lines.push(chalk.bold.cyan('⏳ Session Info / Timers'));
-    lines.push(chalk.gray('------------------------------------------------------------'));
-    lines.push(`${chalk.bold('Project Root:')} ${info.projectRoot}`);
-    lines.push(`${chalk.bold('Project Type:')} ${info.projectType}`);
-    lines.push(`${chalk.bold('Current User:')} ${userLabel}`);
-    lines.push(`${chalk.bold('Auth Mode:')} ${info.authMode}${bypassActive ? chalk.yellow(' (active bypass)') : ''}`);
-    lines.push(`${chalk.bold('Global Timers:')} ${timerSourceColor(info.timers.sourceLabel)}${info.timers.syncActive ? chalk.green(' (live)') : chalk.gray(' (cached)')}`);
-    lines.push(`${chalk.bold('Last Auth:')} ${info.lastAuth > 0 ? authAgeColor(formatElapsedTime(info.lastAuth, now)) : chalk.gray('none')}`);
-    lines.push(`${chalk.bold('Last Activity:')} ${activityAgeColor(formatElapsedTime(info.lastActivity, now))}`);
-    lines.push(chalk.gray('------------------------------------------------------------'));
-    lines.push(chalk.bold('Session Timers'));
-    lines.push(`  ${chalk.bold('Local inactivity logout:')} ${inactivityColor(formatRelativeTime(info.inactivityDeadline, now))}${info.inactivityRemainingMs === 0 ? chalk.redBright(' (will lock on next timeout check)') : ''}`);
+    lines.push(fitLine(chalk.bold.cyan('⏳ Session Control Center'), width));
+    lines.push(buildRule(width));
+    lines.push(buildFieldLine('Project:', `${projectName} (${info.projectType})`, width));
+    lines.push(buildFieldLine('Path:', info.projectRoot, width));
+    lines.push(buildFieldLine('User:', userLabel, width));
+    lines.push(buildFieldLine('Auth State:', `${authStateLabel} • mode=${info.authMode}`, width));
+    lines.push(buildFieldLine('Timer Source:', sourceLabel, width));
+    lines.push(buildRule(width));
+    lines.push(fitLine(chalk.bold('Countdowns'), width));
+    lines.push(buildBulletLine('Interactive inactivity:', stripAnsi(inactivityColor(formatRelativeTime(info.inactivityDeadline, now))), width));
 
     if (info.loginWindow.active && info.loginWindow.expiresAt) {
-        lines.push(`  ${chalk.bold('Browser auth window:')} ${browserColor(formatRelativeTime(info.loginWindow.expiresAt, now))}${info.loginWindow.port ? chalk.gray(` (port ${info.loginWindow.port})`) : ''}`);
+        lines.push(buildBulletLine(
+            'Browser auth window:',
+            `${stripAnsi(browserColor(formatRelativeTime(info.loginWindow.expiresAt, now)))}${info.loginWindow.port ? ` (port ${info.loginWindow.port})` : ''}`,
+            width
+        ));
     } else {
-        lines.push(`  ${chalk.bold('Browser auth window:')} ${chalk.gray('inactive')}`);
+        lines.push(buildBulletLine('Browser auth window:', 'inactive', width));
     }
 
-    if (bypassActive) {
-        lines.push(`  ${chalk.bold('Owner bypass TTL:')} ${bypassColor(formatRelativeTime(info.bypassExpiresAt, now))}`);
-    } else {
-        lines.push(`  ${chalk.bold('Owner bypass TTL:')} ${chalk.gray('inactive')}`);
-    }
+    lines.push(buildBulletLine(
+        'Owner bypass reuse:',
+        bypassActive ? stripAnsi(bypassColor(formatRelativeTime(info.bypassExpiresAt, now))) : 'inactive',
+        width
+    ));
+    lines.push(buildBulletLine(
+        'Stored Firebase token:',
+        info.storedTokens ? stripAnsi(tokenColor(formatRelativeTime(info.storedTokens.expiresAt, now))) : 'none',
+        width
+    ));
+    lines.push(buildBulletLine('Shared server max age:', formatMs(info.sharedServerSessionMaxAgeMs), width));
+    lines.push(buildRule(width));
+    lines.push(fitLine(chalk.bold('Status'), width));
+    lines.push(buildBulletLine('Last auth:', info.lastAuth > 0 ? stripAnsi(authAgeColor(formatElapsedTime(info.lastAuth, now))) : 'none', width));
+    lines.push(buildBulletLine('Last activity:', stripAnsi(activityAgeColor(formatElapsedTime(info.lastActivity, now))), width));
+    lines.push(buildBulletLine('Global relogin marker:', reauthMarker, width));
+    lines.push(buildRule(width));
+    lines.push(fitLine(chalk.bold(`Active Sessions (${activeSessions.length})`), width));
 
-    if (info.storedTokens) {
-        lines.push(`  ${chalk.bold('Stored Firebase token:')} ${tokenColor(formatRelativeTime(info.storedTokens.expiresAt, now))}`);
-    } else {
-        lines.push(`  ${chalk.bold('Stored Firebase token:')} ${chalk.gray('none')}`);
-    }
-
-    lines.push(`  ${chalk.bold('Global relogin marker:')} ${info.timers.forcedReauthAt > 0 ? chalk.redBright(reauthMarker) : chalk.gray(reauthMarker)}`);
-
-    lines.push(chalk.gray('------------------------------------------------------------'));
-    lines.push(chalk.bold('Active Sessions'));
     if (activeSessions.length === 0) {
-        lines.push(chalk.gray('  No active sessions reported yet.'));
+        lines.push(fitLine(chalk.gray('  No active sessions reported yet.'), width));
     } else {
-        activeSessions.slice(0, 8).forEach((session) => {
-            lines.push(`  ${describeSessionPresence(session, now)}`);
+        activeSessions.slice(0, 6).forEach((session) => {
+            lines.push(fitLine(`  ${describeSessionPresence(session, now)}`, width));
         });
-        if (activeSessions.length > 8) {
-            lines.push(chalk.gray(`  ... and ${activeSessions.length - 8} more`));
+        if (activeSessions.length > 6) {
+            lines.push(fitLine(chalk.gray(`  ... and ${activeSessions.length - 6} more`), width));
         }
     }
 
-    lines.push(chalk.gray('------------------------------------------------------------'));
-    lines.push(chalk.dim('These are live session values from the current project and auth state.'));
-    return lines.join('\n');
+    lines.push(buildRule(width));
+    if (SessionTimerManager.isOwner()) {
+        lines.push(fitLine(chalk.dim('q/Esc back  r refresh  e edit local timer defaults'), width));
+        lines.push(fitLine(chalk.dim('Local edits update your cached defaults. Push to Firebase from Maintenance when ready.'), width));
+    } else {
+        lines.push(fitLine(chalk.dim('q/Esc back  r refresh'), width));
+    }
+
+    const padded = lines.slice(0, height);
+    while (padded.length < height) {
+        padded.push('');
+    }
+    return padded.join('\n');
+}
+
+async function promptLocalTimerEdit() {
+    const inquirer = (await import('inquirer')).default;
+    const current = SessionTimerManager.getConfig();
+    const answers = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'projectInactivityMinutes',
+            message: 'Interactive inactivity lock (minutes):',
+            default: String(Math.max(1, Math.round(current.projectInactivityMs / 60000))),
+            validate: (input: string) => /^\d+$/.test(input.trim()) && Number(input.trim()) > 0 ? true : 'Enter a whole number of minutes.'
+        },
+        {
+            type: 'input',
+            name: 'browserLoginMinutes',
+            message: 'Browser auth window (minutes):',
+            default: String(Math.max(1, Math.round(current.browserLoginTimeoutMs / 60000))),
+            validate: (input: string) => /^\d+$/.test(input.trim()) && Number(input.trim()) > 0 ? true : 'Enter a whole number of minutes.'
+        },
+        {
+            type: 'input',
+            name: 'ownerBypassMinutes',
+            message: 'Owner bypass reuse window (minutes):',
+            default: String(Math.max(1, Math.round(current.ownerBypassTimeoutMs / 60000))),
+            validate: (input: string) => /^\d+$/.test(input.trim()) && Number(input.trim()) > 0 ? true : 'Enter a whole number of minutes.'
+        },
+        {
+            type: 'input',
+            name: 'refreshLeadMinutes',
+            message: 'Stored token refresh lead (minutes):',
+            default: String(Math.max(1, Math.round(current.tokenRefreshSkewMs / 60000))),
+            validate: (input: string) => /^\d+$/.test(input.trim()) && Number(input.trim()) > 0 ? true : 'Enter a whole number of minutes.'
+        }
+    ]);
+
+    SessionTimerManager.updateLocalTimers({
+        projectInactivityMs: Number(answers.projectInactivityMinutes) * 60 * 1000,
+        browserLoginTimeoutMs: Number(answers.browserLoginMinutes) * 60 * 1000,
+        ownerBypassTimeoutMs: Number(answers.ownerBypassMinutes) * 60 * 1000,
+        tokenRefreshSkewMs: Number(answers.refreshLeadMinutes) * 60 * 1000
+    });
 }
 
 export async function runSessionInfoViewer(): Promise<void> {
+    try {
+        await SessionTimerManager.refreshFromRemote();
+        await SessionTimerManager.startRealtimeSync();
+    } catch {
+        // Best-effort: the viewer can still render cached timers.
+    }
+
     return new Promise((resolve) => {
         let closed = false;
         let interval: NodeJS.Timeout | null = null;
-        let previousLines = 0;
+        let interactionBusy = false;
+        const openedAltScreen = !io.isAlternateScreenEnabled();
+
+        if (openedAltScreen) {
+            io.enableAlternateScreen();
+        }
 
         const close = () => {
             if (closed) return;
             closed = true;
             if (interval) clearInterval(interval);
             io.release(handler);
-            if (previousLines > 0) {
-                process.stdout.write(`\x1b[${previousLines}A`);
-                process.stdout.write('\x1b[J');
-            }
+            io.disableMouse();
             process.stdout.write('\x1b[?25h');
             process.stdout.write('\x1b[0m');
+            if (openedAltScreen) {
+                io.disableAlternateScreen();
+            }
             resolve();
         };
 
         const render = () => {
             if (closed) return;
-            const frame = `${buildSessionInfoText(Date.now())}\n\n${chalk.gray('Press Enter, q, or Esc to return to Project Settings.')}`;
-            const lines = frame.split('\n').length;
-            if (previousLines > 0) {
-                process.stdout.write(`\x1b[${previousLines}A`);
-            } else {
-                process.stdout.write('\x1b[?25l');
-            }
-            process.stdout.write(frame);
-            if (previousLines > lines) {
-                process.stdout.write('\x1b[J');
-            }
-            previousLines = lines;
+            process.stdout.write('\x1b[?25l');
+            process.stdout.write('\x1b[H\x1b[J');
+            process.stdout.write(buildSessionInfoText(Date.now()));
         };
 
-        const handler = (key: Buffer, str: string) => {
-            if (str === '\r' || str === '\n' || str === 'q' || str === '\u001B' || str === '\u0003') {
+        const runWithPausedRender = async (task: () => Promise<void>) => {
+            if (interactionBusy || closed) return;
+            interactionBusy = true;
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+            io.release(handler);
+            io.disableMouse();
+            process.stdout.write('\x1b[?25h');
+            try {
+                await task();
+            } finally {
+                if (!closed) {
+                    io.enableMouse();
+                    io.consume(handler);
+                    render();
+                    interval = setInterval(render, 1000);
+                }
+                interactionBusy = false;
+            }
+        };
+
+        const handler = (_key: Buffer, str: string) => {
+            if (interactionBusy) return;
+            if (str === '\r' || str === '\n' || str === 'q' || str === 'Q' || str === '\u001B' || str === '\u0003') {
                 close();
+                return;
+            }
+            if (str === 'r' || str === 'R') {
+                void runWithPausedRender(async () => {
+                    await SessionTimerManager.refreshFromRemote({
+                        projectId: state.project.id
+                    });
+                });
+                return;
+            }
+            if ((str === 'e' || str === 'E') && SessionTimerManager.isOwner()) {
+                void runWithPausedRender(promptLocalTimerEdit);
             }
         };
 
+        io.enableMouse();
         io.consume(handler);
         render();
         interval = setInterval(render, 1000);

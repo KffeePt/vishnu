@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const publicRoutes = ["/login", "/api/session", "/api/auth/github/callback"];
+const publicRoutes = ["/login", "/api/session", "/api/auth/session", "/api/auth/session-login", "/api/auth/session-logout", "/api/auth/bridge", "/api/auth/github/callback"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

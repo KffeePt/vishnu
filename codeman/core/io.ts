@@ -10,6 +10,7 @@ class IOManager {
     private lastFocusTime: number = 0;
     private pointerMode: 'unknown' | 'mouse' | 'touchpad' = 'unknown';
     private pointerDetectStarted: boolean = false;
+    private alternateScreenEnabled: boolean = false;
 
     constructor() {
         this.masterHandlerBound = this.masterHandler.bind(this);
@@ -162,7 +163,9 @@ class IOManager {
      * Use this for full-screen TUI apps to preserve the user's scrollback history.
      */
     enableAlternateScreen() {
+        if (this.alternateScreenEnabled) return;
         process.stdout.write('\x1b[?1049h');
+        this.alternateScreenEnabled = true;
     }
 
     /**
@@ -170,7 +173,13 @@ class IOManager {
      * Restores the user's previous terminal state and scrollback.
      */
     disableAlternateScreen() {
+        if (!this.alternateScreenEnabled) return;
         process.stdout.write('\x1b[?1049l');
+        this.alternateScreenEnabled = false;
+    }
+
+    isAlternateScreenEnabled() {
+        return this.alternateScreenEnabled;
     }
 
     /**

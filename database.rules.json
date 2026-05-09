@@ -1,0 +1,40 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "globalTimers": {
+      ".read": "auth != null",
+      ".write": "auth != null && (auth.token.role === 'owner' || auth.token.owner === true)"
+    },
+    "sessions": {
+      "$sessionId": {
+        ".read": "auth != null && (data.child('uid').val() === auth.uid || auth.token.role === 'owner' || auth.token.role === 'admin' || auth.token.owner === true || auth.token.admin === true)",
+        ".write": "auth != null && ((data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === auth.uid) || (!data.exists() && newData.child('uid').val() === auth.uid) || auth.token.role === 'owner' || auth.token.role === 'admin' || auth.token.owner === true || auth.token.admin === true)",
+        "uid": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "lastActivity": {
+          ".validate": "newData.isNumber()"
+        },
+        "expiresAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "revoked": {
+          ".validate": "newData.isBoolean()"
+        },
+        "$other": {
+          ".validate": true
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.role === 'owner' || auth.token.role === 'admin' || auth.token.owner === true || auth.token.admin === true)",
+        ".write": "auth != null && (auth.uid === $uid || auth.token.role === 'owner' || auth.token.role === 'admin' || auth.token.owner === true || auth.token.admin === true)"
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ export interface FirebaseWebSdkConfig {
     apiKey: string;
     authDomain: string;
     projectId: string;
+    databaseURL?: string;
     storageBucket: string;
     messagingSenderId: string;
     appId: string;
@@ -236,6 +237,7 @@ function writeGeneratedFirebaseSdkJson(targetPath: string, sourcePath: string, c
             apiKey: config.apiKey,
             authDomain: config.authDomain,
             projectId: config.projectId,
+            databaseURL: config.databaseURL || '',
             storageBucket: config.storageBucket,
             messagingSenderId: config.messagingSenderId,
             appId: config.appId,
@@ -345,6 +347,7 @@ export function parseFirebaseWebSdkSource(content: string): FirebaseWebSdkConfig
                 apiKey: asString(source.apiKey),
                 authDomain: asString(source.authDomain),
                 projectId: asString(source.projectId),
+                databaseURL: asString(source.databaseURL),
                 storageBucket: asString(source.storageBucket),
                 messagingSenderId: asString(source.messagingSenderId),
                 appId: asString(source.appId),
@@ -359,6 +362,7 @@ export function parseFirebaseWebSdkSource(content: string): FirebaseWebSdkConfig
         apiKey: extractLiteralValue(content, 'apiKey'),
         authDomain: extractLiteralValue(content, 'authDomain'),
         projectId: extractLiteralValue(content, 'projectId'),
+        databaseURL: extractLiteralValue(content, 'databaseURL'),
         storageBucket: extractLiteralValue(content, 'storageBucket'),
         messagingSenderId: extractLiteralValue(content, 'messagingSenderId'),
         appId: extractLiteralValue(content, 'appId'),
@@ -557,6 +561,13 @@ export function buildEnvValuesFromCredentialFiles(options: {
     const existing = parseEnv(options.existingEnvContent ?? '');
     const base = mergeEnvValues(existing, {});
     const projectId = client.projectId || admin.projectId || oauth?.projectId || '';
+    const resolvedDatabaseUrl = client.databaseURL?.trim()
+        || base.FIREBASE_DATABASE_URL
+        || base.NEXT_PUBLIC_FIREBASE_DATABASE_URL
+        || (projectId ? `https://${projectId}-default-rtdb.firebaseio.com/` : '');
+    const publicDatabaseUrl = client.databaseURL?.trim()
+        || base.NEXT_PUBLIC_FIREBASE_DATABASE_URL
+        || '';
 
     return {
         ...base,
@@ -583,7 +594,7 @@ export function buildEnvValuesFromCredentialFiles(options: {
         FIREBASE_API_KEY: client.apiKey,
         FIREBASE_AUTH_DOMAIN: client.authDomain,
         FIREBASE_PROJECT_ID: projectId,
-        FIREBASE_DATABASE_URL: projectId ? `https://${projectId}-default-rtdb.firebaseio.com/` : '',
+        FIREBASE_DATABASE_URL: resolvedDatabaseUrl,
         FIREBASE_STORAGE_BUCKET: client.storageBucket,
         FIREBASE_MESSAGING_SENDER_ID: client.messagingSenderId,
         FIREBASE_APP_ID: client.appId,
@@ -601,7 +612,7 @@ export function buildEnvValuesFromCredentialFiles(options: {
         NEXT_PUBLIC_FIREBASE_API_KEY: client.apiKey,
         NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: client.authDomain,
         NEXT_PUBLIC_FIREBASE_PROJECT_ID: projectId,
-        NEXT_PUBLIC_FIREBASE_DATABASE_URL: projectId ? `https://${projectId}-default-rtdb.firebaseio.com/` : '',
+        NEXT_PUBLIC_FIREBASE_DATABASE_URL: publicDatabaseUrl,
         NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: client.storageBucket,
         NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: client.messagingSenderId,
         NEXT_PUBLIC_FIREBASE_APP_ID: client.appId,
@@ -934,7 +945,8 @@ export function resolveFirebaseBackendConfig(projectPath: string): ResolvedFireb
     }
 
     const authDomain = webConfig.authDomain?.trim() || `${projectId}.firebaseapp.com`;
-    const databaseURL = envValues.FIREBASE_DATABASE_URL?.trim()
+    const databaseURL = webConfig.databaseURL?.trim()
+        || envValues.FIREBASE_DATABASE_URL?.trim()
         || envValues.NEXT_PUBLIC_FIREBASE_DATABASE_URL?.trim()
         || `https://${projectId}-default-rtdb.firebaseio.com/`;
 

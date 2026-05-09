@@ -35,12 +35,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.githubWebhook = void 0;
 const https_1 = require("firebase-functions/v2/https");
-const params_1 = require("firebase-functions/params");
 const logger = __importStar(require("firebase-functions/logger"));
 const firestore_1 = require("firebase-admin/firestore");
 const github_app_1 = require("./github-app");
-const GITHUB_WEBHOOK_SECRET = (0, params_1.defineSecret)("GITHUB_WEBHOOK_SECRET");
-exports.githubWebhook = (0, https_1.onRequest)({ secrets: [GITHUB_WEBHOOK_SECRET] }, async (req, res) => {
+const runtime_config_1 = require("./runtime-config");
+exports.githubWebhook = (0, https_1.onRequest)(async (req, res) => {
     var _a, _b;
     // 1. Verify Request Method
     if (req.method !== "POST") {
@@ -58,7 +57,15 @@ exports.githubWebhook = (0, https_1.onRequest)({ secrets: [GITHUB_WEBHOOK_SECRET
     }
     // We must use the raw body for signature verification
     const rawBody = req.rawBody.toString("utf8");
-    const secret = GITHUB_WEBHOOK_SECRET.value();
+    const secret = (0, runtime_config_1.getRuntimeConfigValue)({
+        envNames: ["GITHUB_WEBHOOK_SECRET"],
+        configPath: ["github", "webhook_secret"],
+    });
+    if (!secret) {
+        logger.error("GitHub webhook secret is not configured");
+        res.status(503).send("GitHub webhook secret is not configured");
+        return;
+    }
     if (!(0, github_app_1.verifyWebhookSignature)(rawBody, signature, secret)) {
         logger.error(`Webhook signature verification failed for delivery ${deliveryId}`);
         res.status(401).send("Unauthorized: Invalid Signature");

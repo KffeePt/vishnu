@@ -36,14 +36,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncClaims = exports.verifyAccess = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
-const params_1 = require("firebase-functions/params");
 const github_app_1 = require("./github-app");
+const runtime_config_1 = require("./runtime-config");
 // Initialize admin app if not already initialized
 if (!admin.apps.length) {
     admin.initializeApp();
 }
-const GITHUB_APP_ID = (0, params_1.defineSecret)('GITHUB_APP_ID');
-const GITHUB_APP_PRIVATE_KEY = (0, params_1.defineSecret)('GITHUB_APP_PRIVATE_KEY');
 function inferAccessRole(claims) {
     if (claims.owner === true || claims.owner === 'master' || claims.role === 'owner') {
         return 'owner';
@@ -145,7 +143,6 @@ exports.verifyAccess = functions.https.onCall(async (data, context) => {
  * Note: Requires GitHub App/PAT integration logic (omitted or stubbed here).
  */
 exports.syncClaims = functions
-    .runWith({ secrets: [GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY] })
     .https.onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Must be logged in.');
@@ -156,8 +153,18 @@ exports.syncClaims = functions
         throw new functions.https.HttpsError('invalid-argument', 'Missing GitHub Username');
     }
     try {
-        const appId = GITHUB_APP_ID.value();
-        const privateKey = GITHUB_APP_PRIVATE_KEY.value().replace(/\\n/g, '\n');
+        const appId = (0, runtime_config_1.getRuntimeConfigValue)({
+            envNames: ['GITHUB_APP_ID'],
+            configPath: ['github', 'app_id'],
+        });
+        const privateKey = (0, runtime_config_1.getRuntimeConfigValue)({
+            envNames: ['GITHUB_APP_PRIVATE_KEY'],
+            configPath: ['github', 'app_private_key'],
+            normalizeNewlines: true,
+        });
+        if (!appId || !privateKey) {
+            throw new functions.https.HttpsError('failed-precondition', 'GitHub App runtime credentials are not configured.');
+        }
         const jwt = (0, github_app_1.createAppJwt)(appId, privateKey);
         const token = await (0, github_app_1.getInstallationToken)(jwt);
         // We check the user's role in the primary org (KffeePt for Vishnu)

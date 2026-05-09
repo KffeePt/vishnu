@@ -1,13 +1,10 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import { getFirestore } from "firebase-admin/firestore";
 import { verifyWebhookSignature } from "./github-app";
-
-const GITHUB_WEBHOOK_SECRET = defineSecret("GITHUB_WEBHOOK_SECRET");
+import { getRuntimeConfigValue } from "./runtime-config";
 
 export const githubWebhook = onRequest(
-  { secrets: [GITHUB_WEBHOOK_SECRET] },
   async (req, res) => {
     // 1. Verify Request Method
     if (req.method !== "POST") {
@@ -28,7 +25,15 @@ export const githubWebhook = onRequest(
 
     // We must use the raw body for signature verification
     const rawBody = req.rawBody.toString("utf8");
-    const secret = GITHUB_WEBHOOK_SECRET.value();
+    const secret = getRuntimeConfigValue({
+      envNames: ["GITHUB_WEBHOOK_SECRET"],
+      configPath: ["github", "webhook_secret"],
+    });
+    if (!secret) {
+      logger.error("GitHub webhook secret is not configured");
+      res.status(503).send("GitHub webhook secret is not configured");
+      return;
+    }
 
     if (!verifyWebhookSignature(rawBody, signature, secret)) {
       logger.error(`Webhook signature verification failed for delivery ${deliveryId}`);

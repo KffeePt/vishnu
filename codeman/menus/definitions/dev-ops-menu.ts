@@ -72,9 +72,19 @@ export const DevOpsMenuDef: MenuDefinition = {
         options.push(
             { label: '---', value: 'sep3', type: 'separator' },
             {
+                label: '🏗️  Build & Testing',
+                value: 'build-menu',
+                action: { type: 'navigate', target: 'build-menu' }
+            },
+            {
                 label: '💀 Kill All (Emulators & Instances)',
                 value: 'kill-all-runners',
                 action: { type: 'script', handler: 'killAllRunners' }
+            },
+            {
+                label: '🚀 Deployment Options',
+                value: 'deployment-menu',
+                action: { type: 'navigate', target: 'deployment-menu' }
             },
             { label: '⬅️  Back', value: 'back', action: { type: 'back' } }
         );

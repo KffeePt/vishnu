@@ -18,7 +18,11 @@ export async function awaitPresenceRegistration(context: {
     uid?: string;
 }, timeoutMs: number = PRESENCE_REGISTRATION_TIMEOUT_MS) {
     return await Promise.race([
-        SessionTimerManager.startPresence(context),
+        SessionTimerManager.startPresence(context).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(chalk.yellow(`   Session presence registration skipped: ${message}`));
+            return null;
+        }),
         new Promise<null>((resolve) => {
             setTimeout(() => resolve(null), timeoutMs);
         })

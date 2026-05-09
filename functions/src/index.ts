@@ -287,6 +287,7 @@ export * from './github-proxy';
 export * from './github-webhook';
 export * from './vishnu-gateway';
 export * from './session-presence';
+export * from './access-control';
 
 // --- Payments ---
 export { paymentWebhook, createPayment, createSubscription } from './payments/webhook-handler';

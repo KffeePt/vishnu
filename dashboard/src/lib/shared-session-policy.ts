@@ -1,0 +1,2 @@
+export const SHARED_SERVER_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+

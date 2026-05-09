@@ -77,6 +77,17 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (request.auth.token.role == 'admin' || request.auth.token.role == 'maintainer');
     }
 
+    match /policy/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    match /sessionLogs/{logId} {
+      allow read: if isAuthenticated() && (isOwner() || request.auth.token.role == 'admin');
+      allow create: if false;
+      allow update, delete: if false;
+    }
+
     // --- Portal Specific Collections ---
     
     // Clients read/write ONLY their own data (clientId == auth.uid)

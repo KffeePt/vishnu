@@ -36,22 +36,30 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getRepositoryPRs = exports.getRepositoryCollaborators = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
+const github_app_1 = require("./github-app");
+const runtime_config_1 = require("./runtime-config");
 // Ensure initialization
 if (!admin.apps.length) {
     admin.initializeApp();
 }
 const GITHUB_API_URL = 'https://api.github.com';
-const params_1 = require("firebase-functions/params");
-const github_app_1 = require("./github-app");
-const GITHUB_APP_ID = (0, params_1.defineSecret)('GITHUB_APP_ID');
-const GITHUB_APP_PRIVATE_KEY = (0, params_1.defineSecret)('GITHUB_APP_PRIVATE_KEY');
 /**
  * Helper to fetch a GitHub Installation Token securely.
  */
 async function getGitHubToken() {
-    const appId = GITHUB_APP_ID.value();
+    const appId = (0, runtime_config_1.getRuntimeConfigValue)({
+        envNames: ['GITHUB_APP_ID'],
+        configPath: ['github', 'app_id'],
+    });
+    const privateKey = (0, runtime_config_1.getRuntimeConfigValue)({
+        envNames: ['GITHUB_APP_PRIVATE_KEY'],
+        configPath: ['github', 'app_private_key'],
+        normalizeNewlines: true,
+    });
+    if (!appId || !privateKey) {
+        throw new functions.https.HttpsError('failed-precondition', 'GitHub App runtime credentials are not configured.');
+    }
     // Support either real newlines or escaped newlines from env
-    const privateKey = GITHUB_APP_PRIVATE_KEY.value().replace(/\\n/g, '\n');
     const jwt = (0, github_app_1.createAppJwt)(appId, privateKey);
     return await (0, github_app_1.getInstallationToken)(jwt);
 }
@@ -59,7 +67,6 @@ async function getGitHubToken() {
  * Proxy for getting repository collaborators.
  */
 exports.getRepositoryCollaborators = functions
-    .runWith({ secrets: [GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY] })
     .https.onCall(async (data, context) => {
     // 1. Auth & Role Check (Only Admins/Maintainers can view this via proxy)
     if (!context.auth)
@@ -97,7 +104,6 @@ exports.getRepositoryCollaborators = functions
  * Proxy for getting active Pull Requests.
  */
 exports.getRepositoryPRs = functions
-    .runWith({ secrets: [GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY] })
     .https.onCall(async (data, context) => {
     if (!context.auth)
         throw new functions.https.HttpsError('unauthenticated', 'Unauthenticated');

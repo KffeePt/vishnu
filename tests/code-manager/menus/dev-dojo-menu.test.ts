@@ -31,6 +31,9 @@ describe('Dev Dojo menu', () => {
             '--- Project Tools ---',
             '--- Automation & Agents ---'
         ]));
+
+        const firstAction = options.find((option) => option.type !== 'separator');
+        expect(firstAction?.value).toBe('dev-ops-menu');
     });
 
     it('keeps nextjs dev server in the environment section', async () => {

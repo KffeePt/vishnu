@@ -5,6 +5,7 @@ import os from 'os';
 import { AppConfig } from '../config/app-config';
 import { getRainbowColor, Colors } from '../singletons/shiva/core/utils';
 import { APP_VERSION } from '../utils/app-version';
+import { io } from '../core/io';
 
 async function getCodeManVersion(): Promise<string> {
     try {
@@ -97,7 +98,6 @@ C8888     d888 888b d888 888 d88 88b     e Y8b Y8b   "8" 888 888 88b
 
 export async function printCodemanHeader(mode: ProjectMode = 'unknown') {
     // Clear screen
-    console.clear();
-    process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+    io.clear();
     console.log(await getCodemanHeaderString(mode));
 }

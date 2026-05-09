@@ -16,7 +16,7 @@ export interface StoredAuthTokens {
 const VISHNU_DIR = path.join(os.homedir(), '.vishnu');
 const AUTH_FILE = path.join(VISHNU_DIR, 'auth.json');
 
-const DEFAULT_SKEW_MS = 2 * 60 * 1000; // Refresh 2 minutes before expiry
+const DEFAULT_SKEW_MS = 5 * 60 * 1000; // Refresh 5 minutes before expiry
 
 function ensureDir() {
     if (!fs.existsSync(VISHNU_DIR)) {
@@ -77,7 +77,7 @@ export const AuthTokenStore = {
     async getValidIdToken(
         apiKey?: string,
         minUpdatedAt = 0,
-        options: { maxSessionAgeMs?: number } = {}
+        options: { maxSessionAgeMs?: number; refreshSkewMs?: number } = {}
     ): Promise<string | null> {
         const tokens = this.load();
         if (!tokens) return null;
@@ -93,7 +93,8 @@ export const AuthTokenStore = {
             return null;
         }
 
-        if (!this.isExpired(tokens)) {
+        const refreshSkewMs = options.refreshSkewMs ?? DEFAULT_SKEW_MS;
+        if (!this.isExpired(tokens, refreshSkewMs)) {
             return tokens.firebaseIdToken;
         }
 

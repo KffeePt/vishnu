@@ -617,40 +617,16 @@ export class BuildManager {
     }
 
     private static async resolveFlutterTarget(target: string): Promise<string | null> {
-        const { ProcessUtils } = await import('../utils/process-utils');
-        const inquirer = (await import('inquirer')).default;
-
-        const devices = await ProcessUtils.getDevices();
         const normalizedTarget = target.toLowerCase();
 
         if (normalizedTarget === 'web') {
-            const browserDevices = devices.filter(device => this.isBrowserWebDevice(device));
-            const choices = [
-                {
-                    name: `Localhost dev server (web-server, port ${this.webServerPort})`,
-                    value: 'web-server'
-                },
-                ...browserDevices.map(device => ({
-                    name: `${device.name} (${device.id})`,
-                    value: device.id
-                }))
-            ];
-
-            if (browserDevices.length === 0) {
-                console.log(chalk.yellow('   > No Chrome/Edge web device found. Opening Flutter web-server on localhost.'));
-                return 'web-server';
-            }
-
-            const { selectedTarget } = await inquirer.prompt([{
-                type: 'list',
-                name: 'selectedTarget',
-                message: 'How should Flutter web run?',
-                default: 'web-server',
-                choices
-            }]);
-
-            return selectedTarget;
+            console.log(chalk.yellow(`   > Opening Flutter web-server on localhost:${this.webServerPort}.`));
+            return 'web-server';
         }
+
+        const { ProcessUtils } = await import('../utils/process-utils');
+        const inquirer = (await import('inquirer')).default;
+        const devices = await ProcessUtils.getDevices();
 
         let matches = devices.filter(device => {
             if (normalizedTarget === 'android') return this.isAndroidDevice(device);

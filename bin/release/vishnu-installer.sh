@@ -5,7 +5,7 @@ set -euo pipefail
 # This script sets up SSH, clones the repo, aligns it to the latest stable
 # release tag, and links the 'codeman' command.
 
-INSTALLER_VERSION="1.0.1-beta.5"
+INSTALLER_VERSION="1.0.2-beta.1"
 STABLE_BRANCH="stable"
 STABLE_DOWNLOAD_URL="https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.sh"
 

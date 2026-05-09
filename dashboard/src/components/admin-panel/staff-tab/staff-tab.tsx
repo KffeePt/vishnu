@@ -37,7 +37,6 @@ import { Employee } from '@/types/candyland';
 import { getAdminHeaders } from '@/lib/client-auth';
 import { AuthenticationRequired } from '../authentication-tab/authentication-required';
 import InventoryAssignmentPanel from '../inventory-management-tab/inventory-assignment-panel';
-import { SentinelMonitorTab } from '../data-tab/sentinel-monitor-tab';
 import AdminChatPanel from './admin-chat-panel';
 import { useMasterPassword } from '@/hooks/use-master-password';
 import { useTabAuth } from "@/hooks/use-tab-auth";
@@ -1272,7 +1271,7 @@ export default function StaffTab({ onSubTabChange }: StaffTabProps) {
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full max-w-2xl grid-cols-4 mb-6 gap-1">
+                <TabsList className="grid w-full max-w-2xl grid-cols-3 mb-6 gap-1">
                     <TabsTrigger value="employees">
                         <User className="h-4 w-4 md:mr-2" />
                         <span className="hidden md:inline">Employees</span>
@@ -1280,10 +1279,6 @@ export default function StaffTab({ onSubTabChange }: StaffTabProps) {
                     <TabsTrigger value="stock">
                         <Package className="h-4 w-4 md:mr-2" />
                         <span className="hidden md:inline">Staff Stock</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="sentinel">
-                        <Shield className="h-4 w-4 md:mr-2" />
-                        <span className="hidden md:inline">Sentinel Monitor</span>
                     </TabsTrigger>
                     <TabsTrigger value="chat">
                         <MessageSquare className="h-4 w-4 md:mr-2" />
@@ -1608,12 +1603,6 @@ export default function StaffTab({ onSubTabChange }: StaffTabProps) {
 
                 <TabsContent value="stock">
                     <InventoryAssignmentPanel soldMap={staffSoldMap} />
-                </TabsContent>
-
-                <TabsContent value="sentinel">
-                    <AuthenticationRequired persistent={false} parentMasterPassword={authSession?.masterPassword} onAuthenticated={() => { }}>
-                        <SentinelMonitorTab employees={employees} />
-                    </AuthenticationRequired>
                 </TabsContent>
 
                 <TabsContent value="chat">

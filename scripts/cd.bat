@@ -13,6 +13,9 @@ set "CHANNEL_INPUT="
 set "ITERATION_INPUT="
 set "NEXT_ITERATION=1"
 set "TAG="
+set "PRERELEASE_INPUT="
+set "PRERELEASE_DEFAULT="
+set "IS_PRERELEASE=false"
 set "COMMIT_MESSAGE="
 set "BLANK_VERSION_SELECTED=0"
 
@@ -28,8 +31,23 @@ echo ========================================================
 echo.
 
 echo [1/7] Checking Environment...
-call :RESOLVE_BUN
-if errorlevel 1 goto :END
+if defined BUN_EXE if exist "%BUN_EXE%" goto :BUN_READY
+if exist "%USERPROFILE%\.bun\bin\bun.exe" (
+    set "BUN_EXE=%USERPROFILE%\.bun\bin\bun.exe"
+    goto :BUN_READY
+)
+for %%I in (bun.exe bun) do (
+    where %%I >nul 2>nul
+    if not errorlevel 1 (
+        set "BUN_EXE=%%I"
+        goto :BUN_READY
+    )
+)
+echo [FAIL] Bun was not found. Install it from https://bun.sh or run the official installer first.
+set "EXIT_CODE=1"
+goto :END
+
+:BUN_READY
 
 where gh >nul 2>nul
 if errorlevel 1 goto :GH_MISSING
@@ -90,7 +108,8 @@ if /i "%CHANNEL_INPUT%"=="a" goto :ASK_ALPHA_ITERATION
 if /i "%CHANNEL_INPUT%"=="b" goto :ASK_BETA_ITERATION
 if "%CHANNEL_INPUT%"=="" (
     set "TAG=v%VER_INPUT%"
-    goto :PROMPT_COMMIT
+    set "PRERELEASE_DEFAULT=n"
+    goto :ASK_PRERELEASE
 )
 echo [WARN] Invalid channel. Use a, b, or leave it blank for production.
 echo.
@@ -110,7 +129,8 @@ if errorlevel 1 (
     goto :ASK_ALPHA_ITERATION
 )
 set "TAG=v%VER_INPUT%-alpha.%ITERATION_INPUT%"
-goto :PROMPT_COMMIT
+set "PRERELEASE_DEFAULT=y"
+goto :ASK_PRERELEASE
 
 :ASK_BETA_ITERATION
 set "NEXT_ITERATION=1"
@@ -126,35 +146,98 @@ if errorlevel 1 (
     goto :ASK_BETA_ITERATION
 )
 set "TAG=v%VER_INPUT%-beta.%ITERATION_INPUT%"
+set "PRERELEASE_DEFAULT=y"
+
+:ASK_PRERELEASE
+set "PRERELEASE_INPUT="
+echo.
+if /i "%PRERELEASE_DEFAULT%"=="y" (
+    set /p PRERELEASE_INPUT="Publish this release as a pre-release? [Y/n]: "
+) else (
+    set /p PRERELEASE_INPUT="Publish this release as a pre-release? [y/N]: "
+)
+for /f "tokens=* delims= " %%A in ("%PRERELEASE_INPUT%") do set "PRERELEASE_INPUT=%%A"
+set "PRERELEASE_INPUT=%PRERELEASE_INPUT:~0,1%"
+if "%PRERELEASE_INPUT%"=="" set "PRERELEASE_INPUT=%PRERELEASE_DEFAULT%"
+if /i "%PRERELEASE_INPUT%"=="y" (
+    set "IS_PRERELEASE=true"
+    goto :PROMPT_COMMIT
+)
+if /i "%PRERELEASE_INPUT%"=="n" (
+    set "IS_PRERELEASE=false"
+    goto :PROMPT_COMMIT
+)
+echo [WARN] Invalid choice. Using the inferred default instead.
+if /i "%PRERELEASE_DEFAULT%"=="y" (
+    set "IS_PRERELEASE=true"
+) else (
+    set "IS_PRERELEASE=false"
+)
+goto :PROMPT_COMMIT
 
 :PROMPT_COMMIT
 echo.
 echo ==========================================
 echo    Target Release Tag: %TAG%
 echo ==========================================
+if /i "%IS_PRERELEASE%"=="true" (
+    echo    Release visibility: Pre-release
+) else (
+    echo    Release visibility: Full release
+)
 echo.
 set /p COMMIT_MESSAGE="Commit message (leave blank to use the default push timestamp message): "
 echo.
-set /p CONFIRM="Proceed? (y/N): "
-if /i not "%CONFIRM%"=="y" goto :END
+set "CONFIRM="
+set /p CONFIRM="Proceed? [Y/n]: "
+for /f "tokens=* delims= " %%A in ("%CONFIRM%") do set "CONFIRM=%%A"
+set "CONFIRM=%CONFIRM:~0,1%"
+if "%CONFIRM%"=="" set "CONFIRM=y"
+if /i "%CONFIRM%"=="y" goto :PROCEED_RELEASE
+if /i "%CONFIRM%"=="n" goto :END
+echo [WARN] Invalid choice. Proceeding with the default answer: yes.
+goto :PROCEED_RELEASE
+
+:PROCEED_RELEASE
 
 echo.
 echo [2/7] Running the Bun CI build pipeline and staging release assets...
 set "VISHNU_NO_PAUSE=1"
 set "VISHNU_RELEASE_TAG=%TAG%"
 set "VISHNU_RELEASE_VERSION=%TAG:v=%"
+set "VISHNU_RELEASE_PRERELEASE=%IS_PRERELEASE%"
 set "VISHNU_REQUIRE_SIGNATURES=1"
 call scripts\ci.bat
 set "VISHNU_NO_PAUSE="
 set "VISHNU_RELEASE_TAG="
 set "VISHNU_RELEASE_VERSION="
+set "VISHNU_RELEASE_PRERELEASE="
 set "VISHNU_REQUIRE_SIGNATURES="
 if errorlevel 1 goto :CI_FAILED
 
 echo.
 echo [3/7] Creating the release commit...
-call :CREATE_COMMIT
-if errorlevel 1 goto :END
+set "HUMAN_TIMESTAMP="
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "Get-Date -Format 'MMMM d, yyyy h:mm tt'"`) do set "HUMAN_TIMESTAMP=%%T"
+if "%HUMAN_TIMESTAMP%"=="" set "HUMAN_TIMESTAMP=%DATE% %TIME%"
+if "%COMMIT_MESSAGE%"=="" (
+    set "FULL_COMMIT_MESSAGE=[vishnu: %TAG%] push %HUMAN_TIMESTAMP%"
+) else (
+    set "FULL_COMMIT_MESSAGE=[vishnu: %TAG%] %COMMIT_MESSAGE%"
+)
+echo.
+echo Preparing commit:
+echo   %FULL_COMMIT_MESSAGE%
+git add -A
+if errorlevel 1 goto :COMMIT_STAGE_FAILED
+git diff --cached --quiet
+if errorlevel 1 (
+    git commit -m "%FULL_COMMIT_MESSAGE%"
+    if errorlevel 1 goto :COMMIT_FAILED
+    echo Commit created successfully.
+) else (
+    echo No staged changes detected. Skipping commit creation.
+)
 
 echo.
 echo [4/7] Pushing the current branch for Vercel...
@@ -185,8 +268,9 @@ if errorlevel 1 goto :TAG_PUSH_FAILED
 
 echo.
 echo [6/7] Waiting for the GitHub release to appear...
-call :WAIT_FOR_RELEASE "%TAG%"
-if errorlevel 1 goto :RELEASE_WAIT_FAILED
+set "RELEASE_READY="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%TAG%'; $deadline=(Get-Date).AddMinutes(10); $required=@('vishnu-installer.exe','vishnu-installer.sh','vishnu-installer.exe.sha256','vishnu-installer.sh.sha256','vishnu-installer.exe.asc','vishnu-installer.sh.asc'); do { try { $raw = gh release view $tag --json tagName,assets 2>$null; if ($LASTEXITCODE -eq 0 -and $raw) { $release = $raw | ConvertFrom-Json; $names = @($release.assets | ForEach-Object { $_.name }); $missing = @($required | Where-Object { $_ -notin $names }); if ($missing.Count -eq 0) { Write-Output 'ready'; exit 0 } } } catch { }; Start-Sleep -Seconds 10 } while ((Get-Date) -lt $deadline); exit 1"`) do set "RELEASE_READY=%%V"
+if /i not "%RELEASE_READY%"=="ready" goto :RELEASE_WAIT_FAILED
 echo.
 echo [SUCCESS] Release %TAG% is live.
 echo [7/7] The latest branch push is now available for Vercel's dashboard deployment hooks.
@@ -195,36 +279,6 @@ echo Latest stable downloads:
 echo   https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.exe
 echo   https://github.com/KffeePt/vishnu/releases/latest/download/vishnu-installer.sh
 goto :END
-
-:CREATE_COMMIT
-set "HUMAN_TIMESTAMP="
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "Get-Date -Format 'MMMM d, yyyy h:mm tt'"`) do set "HUMAN_TIMESTAMP=%%T"
-if "%HUMAN_TIMESTAMP%"=="" set "HUMAN_TIMESTAMP=%DATE% %TIME%"
-if "%COMMIT_MESSAGE%"=="" (
-    set "FULL_COMMIT_MESSAGE=[vishnu: %TAG%] push %HUMAN_TIMESTAMP%"
-) else (
-    set "FULL_COMMIT_MESSAGE=[vishnu: %TAG%] %COMMIT_MESSAGE%"
-)
-echo.
-echo Preparing commit:
-echo   %FULL_COMMIT_MESSAGE%
-git add -A
-if errorlevel 1 goto :COMMIT_STAGE_FAILED
-git diff --cached --quiet
-if not errorlevel 1 (
-    echo No staged changes detected. Skipping commit creation.
-    exit /b 0
-)
-git commit -m "%FULL_COMMIT_MESSAGE%"
-if errorlevel 1 goto :COMMIT_FAILED
-echo Commit created successfully.
-exit /b 0
-
-:WAIT_FOR_RELEASE
-set "RELEASE_READY="
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$tag='%~1'; $deadline=(Get-Date).AddMinutes(10); $required=@('vishnu-installer.exe','vishnu-installer.sh','vishnu-installer.exe.sha256','vishnu-installer.sh.sha256','vishnu-installer.exe.asc','vishnu-installer.sh.asc'); do { try { $raw = gh release view $tag --json tagName,assets 2>$null; if ($LASTEXITCODE -eq 0 -and $raw) { $release = $raw | ConvertFrom-Json; $names = @($release.assets | ForEach-Object { $_.name }); $missing = @($required | Where-Object { $_ -notin $names }); if ($missing.Count -eq 0) { Write-Host ('Release assets detected: ' + $names.Count); Write-Output 'ready'; exit 0 } } } catch { }; Start-Sleep -Seconds 10 } while ((Get-Date) -lt $deadline); exit 1"`) do set "RELEASE_READY=%%V"
-if /i "%RELEASE_READY%"=="ready" exit /b 0
-exit /b 1
 
 :GH_MISSING
 echo [FAIL] GitHub CLI gh not found.
@@ -276,23 +330,6 @@ echo [FAIL] Timed out waiting for GitHub to create the release or upload its ass
 echo        Check the workflow run and release page for %TAG%.
 set "EXIT_CODE=1"
 goto :END
-
-:RESOLVE_BUN
-if defined BUN_EXE if exist "%BUN_EXE%" exit /b 0
-if exist "%USERPROFILE%\.bun\bin\bun.exe" (
-    set "BUN_EXE=%USERPROFILE%\.bun\bin\bun.exe"
-    exit /b 0
-)
-for %%I in (bun.exe bun) do (
-    where %%I >nul 2>nul
-    if not errorlevel 1 (
-        set "BUN_EXE=%%I"
-        exit /b 0
-    )
-)
-echo [FAIL] Bun was not found. Install it from https://bun.sh or run the official installer first.
-set "EXIT_CODE=1"
-exit /b 1
 
 :END
 echo.

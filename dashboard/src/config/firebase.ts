@@ -23,7 +23,7 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
-const rtdb = getDatabase(app);
+const rtdb = firebaseConfig.databaseURL ? getDatabase(app) : (null as any);
 const storage = getStorage(app);
 
 const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';

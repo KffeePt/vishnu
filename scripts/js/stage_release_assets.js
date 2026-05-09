@@ -166,9 +166,11 @@ function signInstallersIfPossible() {
 }
 
 function writeManifest(signatureFiles) {
+    const prerelease = /^(1|true|yes|y)$/i.test(process.env.VISHNU_RELEASE_PRERELEASE || '');
     const manifest = {
         tag: (process.env.VISHNU_RELEASE_TAG || '').trim(),
         version: (process.env.VISHNU_RELEASE_VERSION || '').trim(),
+        prerelease,
         builtAt: new Date().toISOString(),
         assets: [...REQUIRED_FILES, ...signatureFiles],
         signaturesPresent: signatureFiles.length === INSTALLER_FILES.length

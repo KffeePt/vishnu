@@ -40,8 +40,8 @@ const scheduler_1 = require("firebase-functions/v2/scheduler");
 if (!admin.apps.length) {
     admin.initializeApp();
 }
-const ACTIVE_SESSIONS_PATH = 'system/activeSessions';
-const TIMER_CONFIG_PATH = 'system/sessionTimers';
+const ACTIVE_SESSIONS_PATH = 'sessions';
+const TIMER_CONFIG_PATH = 'globalTimers';
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
 const MAX_ACTIVE_TERMINALS = 5;
 const STALE_GRACE_MS = 60 * 1000;
@@ -82,7 +82,7 @@ function buildPresenceKey(entry) {
 }
 function normalizeSessionEntry(sessionId, value, inactivityMs, now) {
     const startedAt = asNumber(value === null || value === void 0 ? void 0 : value.startedAt, now);
-    const lastSeenAt = asNumber(value === null || value === void 0 ? void 0 : value.lastSeenAt, startedAt);
+    const lastSeenAt = asNumber(value === null || value === void 0 ? void 0 : value.lastActivity, asNumber(value === null || value === void 0 ? void 0 : value.lastSeenAt, startedAt));
     const expiresAt = asNumber(value === null || value === void 0 ? void 0 : value.expiresAt, lastSeenAt + inactivityMs);
     const isExpired = expiresAt <= now;
     return {
@@ -94,10 +94,13 @@ function normalizeSessionEntry(sessionId, value, inactivityMs, now) {
         projectId: typeof (value === null || value === void 0 ? void 0 : value.projectId) === 'string' ? value.projectId : undefined,
         userEmail: typeof (value === null || value === void 0 ? void 0 : value.userEmail) === 'string' ? value.userEmail : undefined,
         uid: typeof (value === null || value === void 0 ? void 0 : value.uid) === 'string' ? value.uid : undefined,
+        role: typeof (value === null || value === void 0 ? void 0 : value.role) === 'string' ? value.role : undefined,
+        client: typeof (value === null || value === void 0 ? void 0 : value.client) === 'string' ? value.client : undefined,
         status: (value === null || value === void 0 ? void 0 : value.status) === 'idle'
             ? 'idle'
             : ((value === null || value === void 0 ? void 0 : value.status) === 'expired' || isExpired ? 'expired' : 'active'),
         startedAt,
+        lastActivity: lastSeenAt,
         lastSeenAt,
         expiresAt
     };
@@ -159,7 +162,7 @@ async function reconcileSessionsInternal() {
         db.ref(ACTIVE_SESSIONS_PATH).once('value')
     ]);
     const configValue = configSnap.val() || {};
-    const inactivityMs = asNumber(configValue.projectInactivityMs, DEFAULT_INACTIVITY_MS);
+    const inactivityMs = asNumber(configValue.projectInactivityMs, asNumber(configValue.tuiInactivityLock, DEFAULT_INACTIVITY_MS / 1000) * 1000);
     const rawSessions = sessionsSnap.val();
     const plan = buildSessionPresencePlan(rawSessions, inactivityMs);
     if (plan.removals.length > 0) {

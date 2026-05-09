@@ -29,6 +29,23 @@ describe('firebase credential helpers', () => {
         expect(parsed.projectId).toBe('test-project-id');
         expect(parsed.apiKey).toBe('test-api-key');
         expect(parsed.measurementId).toBe('G-12345ABCDE');
+        expect(parsed.databaseURL).toBe('');
+    });
+
+    it('parses explicit databaseURL fields from firebase config snippets', () => {
+        const parsed = parseFirebaseWebSdkSource(`
+            const firebaseConfig = {
+                apiKey: "test-api-key",
+                authDomain: "test-project-id.firebaseapp.com",
+                projectId: "test-project-id",
+                databaseURL: "https://custom-rtdb.example.test",
+                storageBucket: "test-project-id.firebasestorage.app",
+                messagingSenderId: "123",
+                appId: "app-id"
+            };
+        `);
+
+        expect(parsed.databaseURL).toBe('https://custom-rtdb.example.test');
     });
 
     it('builds env values from root credential files', () => {
@@ -50,6 +67,8 @@ describe('firebase credential helpers', () => {
         expect(envValues.GOOGLE_WEB_CLIENT_ID).toBe('test-web-client-id.apps.googleusercontent.com');
         expect(envValues.GOOGLE_CLIENT_SECRET).toBe('test-oauth-secret');
         expect(envValues.FIREBASE_WEB_SDK_FILE).toBe('firebase-sdk.json');
+        expect(envValues.FIREBASE_DATABASE_URL).toBe('https://test-project-id-default-rtdb.firebaseio.com/');
+        expect(envValues.NEXT_PUBLIC_FIREBASE_DATABASE_URL).toBe('');
     });
 
     it('parses oauth json supplied by Google directly', () => {

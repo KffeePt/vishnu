@@ -1,21 +1,22 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { adminAuth } from "@/lib/firebase/server";
 import { AdminLayout } from "@/components/layout/admin-layout";
+import { resolveDashboardSessionFromCookie } from "@/lib/access-control";
 
 export default async function AdminRootLayout({ children }: { children: React.ReactNode }) {
   // Extract session cookie for basic admin route protection
   const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get("__session")?.value;
+  const sessionCookie = cookieStore.get("__session")?.value || cookieStore.get("session")?.value;
 
   if (!sessionCookie) {
     redirect("/login");
   }
 
   try {
-    // Basic verification - just ensure they are logged in
-    // Real role checks are done inside pages or deeper layouts (like admin/system)
-    await adminAuth.verifySessionCookie(sessionCookie, true);
+    const resolved = await resolveDashboardSessionFromCookie(sessionCookie);
+    if (!resolved.validation.valid) {
+      redirect("/login");
+    }
   } catch {
     redirect("/login");
   }

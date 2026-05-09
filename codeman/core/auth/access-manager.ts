@@ -11,6 +11,7 @@ import {
     MAX_BROWSER_SESSION_AGE_MS,
     shouldAllowOwnerBypass
 } from './access-policy';
+import { resolveFirebaseBackendConfig } from '../project/firebase-credentials';
 
 export class AuthAccessManager {
     private static async ensureProjectContext(projectPath: string) {
@@ -139,7 +140,6 @@ export class AuthAccessManager {
             const __dirname = path.dirname(__filename);
             const inferredVishnuRoot = path.resolve(__dirname, '..', '..', '..');
             const vishnuRoot = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_ROOT) : inferredVishnuRoot;
-            const { resolveFirebaseBackendConfig } = await import('../project/firebase-credentials');
 
             let bypassChoice: 'bypass' | 'continue';
             const isRaw = !!(process.stdin.isTTY && process.stdin.isRaw);
@@ -182,7 +182,11 @@ export class AuthAccessManager {
                         projectId: vishnuBackend.projectId,
                         apiKey: vishnuBackend.apiKey,
                         authDomain: vishnuBackend.authDomain,
-                        serviceAccount: vishnuBackend.serviceAccountPath
+                        serviceAccount: vishnuBackend.serviceAccountPath,
+                        accessControlProjectId: vishnuBackend.projectId,
+                        roleSource: 'access-control-preferred' as const,
+                        accessControlOptional: true,
+                        requiredRoles: ['owner', 'admin']
                     };
 
                     console.log(chalk.cyan('\n🔐 Opening Vishnu owner login...'));
@@ -248,7 +252,16 @@ export class AuthAccessManager {
         await FirebaseContextManager.checkContext();
 
         const { AuthService } = await import('../auth');
-        const isAuthenticated = await AuthService.login(state);
+        const projectBackend = resolveFirebaseBackendConfig(projectPath);
+        const isAuthenticated = await AuthService.login(state, {
+            projectId: projectBackend?.projectId || process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || undefined,
+            apiKey: projectBackend?.apiKey || process.env.FIREBASE_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || undefined,
+            authDomain: projectBackend?.authDomain || process.env.FIREBASE_AUTH_DOMAIN || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || undefined,
+            serviceAccount: projectBackend?.serviceAccountPath || process.env.GOOGLE_APPLICATION_CREDENTIALS || undefined,
+            roleSource: 'claims-only',
+            accessControlOptional: true,
+            requiredRoles: ['owner', 'dev']
+        });
 
         if (!isAuthenticated) {
             console.log(chalk.red('\n🚫 Authentication Failed or Cancelled.'));

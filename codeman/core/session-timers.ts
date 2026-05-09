@@ -9,7 +9,9 @@ import { fileURLToPath } from 'url';
 import { UserConfigManager } from '../config/user-config';
 import { AuthTokenStore } from './auth/token-store';
 import { state } from './state';
+import { io } from './io';
 import { resolveFirebaseBackendConfig } from './project/firebase-credentials';
+import { callAccessControlFunction } from './auth/access-control-client';
 
 export interface SessionTimerConfig {
     projectInactivityMs: number;
@@ -66,9 +68,9 @@ const VISHNU_ROOT = process.env.VISHNU_ROOT ? path.resolve(process.env.VISHNU_RO
 const CACHE_DIR = path.join(os.homedir(), '.vishnu');
 const CACHE_FILE = path.join(CACHE_DIR, 'session-timers.json');
 const MACHINE_ID_FILE = path.join(CACHE_DIR, 'machine-id');
-const DEFAULT_RTDP_PATH = 'system/sessionTimers';
-const DEFAULT_FIRESTORE_DOC = 'system/sessionTimers';
-const DEFAULT_ACTIVE_SESSIONS_PATH = 'system/activeSessions';
+const DEFAULT_RTDP_PATH = 'globalTimers';
+const DEFAULT_FIRESTORE_DOC = 'policy/accessControl';
+const DEFAULT_ACTIVE_SESSIONS_PATH = 'sessions';
 const MAX_ACTIVE_TERMINALS = 5;
 const MIN_DURATION_MS = 59 * 1000;
 const STALE_SESSION_GRACE_MS = 60 * 1000;
@@ -76,7 +78,7 @@ const STALE_SESSION_GRACE_MS = 60 * 1000;
 const DEFAULT_SESSION_TIMERS: SessionTimerConfig = {
     projectInactivityMs: 60 * 60 * 1000,
     browserLoginTimeoutMs: 2 * 60 * 1000,
-    ownerBypassTimeoutMs: 30 * 60 * 1000,
+    ownerBypassTimeoutMs: 60 * 60 * 1000,
     tokenRefreshSkewMs: 2 * 60 * 1000,
     forcedReauthAt: 0,
     source: 'defaults',
@@ -238,6 +240,43 @@ function normalizeConfig(input: Partial<SessionTimerConfig> = {}, source: Sessio
     return next;
 }
 
+function deserializeRemoteConfig(input: Record<string, unknown> | null | undefined, source: SessionTimerConfig['source']): SessionTimerConfig {
+    if (!input) {
+        return normalizeConfig({}, source);
+    }
+
+    const remoteInactivitySeconds = typeof input.tuiInactivityLock === 'number' ? input.tuiInactivityLock : undefined;
+    const remoteBrowserSeconds = typeof input.authWindowTimeout === 'number' ? input.authWindowTimeout : undefined;
+    const remoteBypassSeconds = typeof input.ownerBypassWindow === 'number' ? input.ownerBypassWindow : undefined;
+    const remoteRefreshLeadSeconds = typeof input.tokenRefreshLead === 'number' ? input.tokenRefreshLead : undefined;
+
+    return normalizeConfig({
+        projectInactivityMs: remoteInactivitySeconds ? remoteInactivitySeconds * 1000 : (input.projectInactivityMs as number | undefined),
+        browserLoginTimeoutMs: remoteBrowserSeconds ? remoteBrowserSeconds * 1000 : (input.browserLoginTimeoutMs as number | undefined),
+        ownerBypassTimeoutMs: remoteBypassSeconds ? remoteBypassSeconds * 1000 : (input.ownerBypassTimeoutMs as number | undefined),
+        tokenRefreshSkewMs: remoteRefreshLeadSeconds ? remoteRefreshLeadSeconds * 1000 : (input.tokenRefreshSkewMs as number | undefined),
+        forcedReauthAt: input.forcedReauthAt as number | undefined,
+        updatedAt: input.updatedAt as number | undefined,
+        updatedBy: input.updatedBy as string | undefined
+    }, source);
+}
+
+function serializeRemoteConfig(config: SessionTimerConfig) {
+    return {
+        tuiInactivityLock: Math.max(1, Math.round(config.projectInactivityMs / 1000)),
+        authWindowTimeout: Math.max(1, Math.round(config.browserLoginTimeoutMs / 1000)),
+        ownerBypassWindow: Math.max(1, Math.round(config.ownerBypassTimeoutMs / 1000)),
+        tokenRefreshLead: Math.max(1, Math.round(config.tokenRefreshSkewMs / 1000)),
+        updatedAt: config.updatedAt,
+        updatedBy: config.updatedBy || '',
+        projectInactivityMs: config.projectInactivityMs,
+        browserLoginTimeoutMs: config.browserLoginTimeoutMs,
+        ownerBypassTimeoutMs: config.ownerBypassTimeoutMs,
+        tokenRefreshSkewMs: config.tokenRefreshSkewMs,
+        forcedReauthAt: config.forcedReauthAt
+    };
+}
+
 function getRemotePaths() {
     return {
         rtdbPath: (process.env.VISHNU_SESSION_TIMERS_RTDB_PATH || DEFAULT_RTDP_PATH).trim(),
@@ -256,10 +295,10 @@ function resolveBackendServiceAccountPath(rawPath?: string): string {
     return path.isAbsolute(trimmed) ? trimmed : path.resolve(VISHNU_ROOT, trimmed);
 }
 
-function getBackendConnection() {
+function getBackendConnection(context?: SessionTimerContext) {
     const inferredBackend = resolveFirebaseBackendConfig(VISHNU_ROOT);
-    const rawProjectId = (process.env.VISHNU_SESSION_BACKEND_PROJECT_ID || inferredBackend?.projectId || '').trim();
-    const rawDatabaseUrl = (process.env.VISHNU_SESSION_BACKEND_DATABASE_URL || inferredBackend?.databaseURL || '').trim();
+    const rawProjectId = (process.env.VISHNU_SESSION_BACKEND_PROJECT_ID || inferredBackend?.projectId || context?.projectId || '').trim();
+    const rawDatabaseUrl = (process.env.VISHNU_SESSION_BACKEND_DATABASE_URL || inferredBackend?.databaseURL || context?.databaseURL || '').trim();
     const rawServiceAccountPath = process.env.VISHNU_SESSION_BACKEND_ADMIN_SDK || inferredBackend?.serviceAccountPath;
 
     return {
@@ -355,7 +394,9 @@ export function analyzeSessionPresence(raw: unknown, options?: {
     const normalized = values.map((item: any) => {
         const sessionId = String(item.sessionId || item.id || item.key || cryptoSafeRandomId());
         const startedAt = typeof item.startedAt === 'number' ? item.startedAt : now;
-        const lastSeenAt = typeof item.lastSeenAt === 'number' ? item.lastSeenAt : startedAt;
+        const lastSeenAt = typeof item.lastActivity === 'number'
+            ? item.lastActivity
+            : (typeof item.lastSeenAt === 'number' ? item.lastSeenAt : startedAt);
         const expiresAt = typeof item.expiresAt === 'number' ? item.expiresAt : (lastSeenAt + inactivityMs);
         const isExpired = expiresAt <= now;
         const status = item.status === 'idle'
@@ -503,7 +544,7 @@ function getTerminalIdentity() {
 }
 
 async function ensureTimerApp(context?: SessionTimerContext): Promise<admin.app.App | null> {
-    const backend = getBackendConnection();
+    const backend = getBackendConnection(context);
     const contextKey = [backend.projectId, backend.databaseURL, backend.serviceAccountPath].join('|');
 
     if (timerApp && currentContextKey === contextKey) {
@@ -588,9 +629,11 @@ export const SessionTimerManager = {
         const cachedUser = UserConfigManager.getCachedUser();
         const authMode = UserConfigManager.getAuthMode();
         const bypassExpiresAt = UserConfigManager.getAuthBypassExpiresAt();
+        const hasFreshStoredSession = AuthTokenStore.hasFreshBrowserSession(this.getConfig().ownerBypassTimeoutMs);
         const bypassFresh =
             authMode === 'owner-bypass' &&
             bypassExpiresAt > now &&
+            hasFreshStoredSession &&
             !!cachedUser &&
             (cachedUser.role === 'owner' || cachedUser.isAdmin === true);
 
@@ -598,6 +641,7 @@ export const SessionTimerManager = {
             state.authBypass === true &&
             authMode === 'owner-bypass' &&
             bypassExpiresAt > now &&
+            hasFreshStoredSession &&
             (
                 state.user?.role === 'owner' ||
                 state.user?.isAdmin === true ||
@@ -615,6 +659,7 @@ export const SessionTimerManager = {
         const authMode = UserConfigManager.getAuthMode();
         const bypassExpiresAt = UserConfigManager.getAuthBypassExpiresAt();
         const storedTokens = AuthTokenStore.load();
+        const hasFreshStoredSession = AuthTokenStore.hasFreshBrowserSession(config.ownerBypassTimeoutMs, storedTokens);
         const authWatermark = Math.max(
             UserConfigManager.getLastAuth(),
             UserConfigManager.getAuthBypassStartedAt(),
@@ -634,7 +679,7 @@ export const SessionTimerManager = {
         }
 
         if (authMode === 'owner-bypass') {
-            return bypassExpiresAt > now && (runtimeOwner || cachedOwner);
+            return hasFreshStoredSession && bypassExpiresAt > now && (runtimeOwner || cachedOwner);
         }
 
         const lastAuth = UserConfigManager.getLastAuth();
@@ -691,7 +736,8 @@ export const SessionTimerManager = {
             if (issues.length > 0) {
                 console.log(chalk.yellow(`⚠️  Timer config issues detected (${issues.length}).`));
             }
-            applyIncomingConfig(value, 'rtdb');
+            const next = deserializeRemoteConfig(value as Record<string, unknown>, 'rtdb');
+            applyIncomingConfig(next, 'rtdb');
         };
 
         ref.on('value', attachedListener, (error) => {
@@ -762,7 +808,8 @@ export const SessionTimerManager = {
                 if (issues.length > 0) {
                     console.log(chalk.yellow(`⚠️  Timer config issues detected (${issues.length}).`));
                 }
-                applyIncomingConfig(value, 'rtdb');
+                const next = deserializeRemoteConfig(value as Record<string, unknown>, 'rtdb');
+                applyIncomingConfig(next, 'rtdb');
             } else {
                 setTimerValidationIssues([]);
             }
@@ -818,84 +865,41 @@ export const SessionTimerManager = {
             await this.stopPresence();
         }
 
-        const app = await ensureTimerApp(context);
-        if (!app) {
-            throw new Error('Session timer backend is not available.');
+        if (options?.clearActiveSessions !== false) {
+            await callAccessControlFunction({
+                functionName: 'revokeAllAccessSessions',
+                projectId: context?.projectId,
+                data: {}
+            });
         }
 
-        const { rtdbPath, firestoreDoc } = getRemotePaths();
-        const { activeSessionsPath } = getRemotePaths();
-        const payload = {
-            projectInactivityMs: next.projectInactivityMs,
-            browserLoginTimeoutMs: next.browserLoginTimeoutMs,
-            ownerBypassTimeoutMs: next.ownerBypassTimeoutMs,
-            tokenRefreshSkewMs: next.tokenRefreshSkewMs,
-            forcedReauthAt: next.forcedReauthAt,
-            source: 'rtdb',
-            updatedAt: next.updatedAt,
-            updatedBy: next.updatedBy
-        };
-
-        const clearSessionsPromise = options?.clearActiveSessions === false
-            ? Promise.resolve()
-            : app.database().ref(activeSessionsPath).remove();
-
-        const [clearResult, rtdbResult, firestoreResult] = await Promise.allSettled([
-            clearSessionsPromise,
-            app.database().ref(rtdbPath).set(payload),
-            app.firestore().doc(firestoreDoc).set(payload, { merge: true })
-        ]);
-
+        const result = await callAccessControlFunction<{ timers?: Record<string, unknown> }>({
+            functionName: 'updateGlobalTimers',
+            projectId: context?.projectId,
+            data: serializeRemoteConfig(next)
+        });
+        if (result?.timers) {
+            currentConfig = deserializeRemoteConfig(result.timers, 'rtdb');
+            persistCachedConfig(currentConfig);
+            emitter.emit('change', { ...currentConfig });
+        }
         if (options?.clearActiveSessions !== false) {
             activeSessionsCache = [];
             emitter.emit('change', { ...currentConfig });
-        }
-
-        if (clearResult.status === 'rejected') {
-            console.log(chalk.yellow(`⚠️  Failed to clear active sessions: ${clearResult.reason}`));
-        }
-        if (rtdbResult.status === 'rejected') {
-            throw new Error(`Failed to write RTDB timer settings: ${rtdbResult.reason}`);
-        }
-        if (firestoreResult.status === 'rejected') {
-            console.log(chalk.yellow(`⚠️  Firestore mirror write failed: ${firestoreResult.reason}`));
         }
 
         return this.getConfig();
     },
 
     async startPresence(context?: { projectPath?: string; projectId?: string; userEmail?: string; uid?: string }): Promise<SessionPresenceRecord | null> {
-        const app = await ensureTimerApp();
-        if (!app) return null;
-
-        const { activeSessionsPath } = getRemotePaths();
         const terminal = getTerminalIdentity();
-        const rawSessions = (await app.database().ref(activeSessionsPath).once('value')).val();
-        const analysis = await pruneRemoteSessionPresence(app, rawSessions);
-        activeSessionsCache = analysis.sessions;
         presenceSessionId = terminal.terminalId;
         presenceTerminalId = terminal.terminalId;
         presenceTerminalLabel = terminal.terminalLabel;
 
-        const liveSessions = activeSessionsCache.filter((session) => session.expiresAt > Date.now() && session.status !== 'expired');
-        const uniqueTerminals = new Set(liveSessions.map((session) => session.terminalId || session.sessionId));
-        const matchingTerminalSessions = liveSessions.filter((session) => (session.terminalId || session.sessionId) === terminal.terminalId);
-        if (!uniqueTerminals.has(terminal.terminalId) && uniqueTerminals.size >= MAX_ACTIVE_TERMINALS) {
-            console.log(chalk.yellow(`⚠️  Session limit reached (${MAX_ACTIVE_TERMINALS}). Skipping presence registration for this terminal.`));
-            return null;
-        }
-
-        if (matchingTerminalSessions.length > 0) {
-            await Promise.allSettled(
-                matchingTerminalSessions
-                    .filter((session) => session.sessionId !== terminal.terminalId)
-                    .map((session) => app.database().ref(`${activeSessionsPath}/${session.sessionId}`).remove())
-            );
-        }
-
         presenceContext = {
             projectPath: context?.projectPath || state.project.rootPath || process.cwd(),
-            projectId: context?.projectId || state.project.id || getBackendConnection().projectId,
+            projectId: context?.projectId || getBackendConnection().projectId || state.project.id,
             userEmail: context?.userEmail || state.user?.email,
             uid: context?.uid || state.user?.uid
         };
@@ -915,18 +919,45 @@ export const SessionTimerManager = {
             expiresAt: Date.now() + this.getConfig().projectInactivityMs,
             source: 'local'
         });
-
-        const ref = app.database().ref(`${activeSessionsPath}/${presenceSessionId}`);
         const writeHeartbeat = async () => {
-            const nextPayload = {
-                ...payload,
-                lastSeenAt: Date.now(),
-                expiresAt: Date.now() + this.getConfig().projectInactivityMs
-            };
-            await ref.set(nextPayload);
-        };
+            const result = await callAccessControlFunction<{ lastActivity?: number; expiresAt?: number }>({
+                functionName: 'touchAccessSession',
+                projectId: presenceContext?.projectId,
+                data: {
+                    sessionId: presenceSessionId
+                }
+            });
 
-        await writeHeartbeat();
+            payload.lastSeenAt = typeof result?.lastActivity === 'number'
+                ? result.lastActivity
+                : Date.now();
+            payload.expiresAt = typeof result?.expiresAt === 'number'
+                ? result.expiresAt
+                : Date.now() + this.getConfig().projectInactivityMs;
+        };
+        const created = await callAccessControlFunction<{ session?: Record<string, unknown> }>({
+            functionName: 'createAccessSession',
+            projectId: presenceContext?.projectId,
+            data: {
+                sessionId: presenceSessionId,
+                client: 'tui',
+                clientLabel: presenceTerminalLabel,
+                projectId: presenceContext?.projectId,
+                machineId: terminal.machineId,
+                terminalId: presenceTerminalId,
+                terminalLabel: presenceTerminalLabel,
+                isOwnerBypass: UserConfigManager.getAuthMode() === 'owner-bypass'
+            }
+        });
+
+        if (created?.session) {
+            payload.lastSeenAt = typeof created.session.lastActivity === 'number'
+                ? created.session.lastActivity
+                : payload.lastSeenAt;
+            payload.expiresAt = typeof created.session.expiresAt === 'number'
+                ? created.session.expiresAt
+                : payload.expiresAt;
+        }
         activeSessionsCache = [
             payload,
             ...activeSessionsCache.filter((session) => session.sessionId !== payload.sessionId)
@@ -950,11 +981,14 @@ export const SessionTimerManager = {
             activeSessionsCache = activeSessionsCache.filter((session) => session.sessionId !== presenceSessionId);
             emitter.emit('change', { ...currentConfig });
             try {
-                const app = await ensureTimerApp();
-                if (app) {
-                    const { activeSessionsPath } = getRemotePaths();
-                    await app.database().ref(`${activeSessionsPath}/${presenceSessionId}`).remove();
-                }
+                await callAccessControlFunction({
+                    functionName: 'revokeAccessSession',
+                    projectId: presenceContext?.projectId,
+                    data: {
+                        sessionId: presenceSessionId,
+                        reason: 'client-close'
+                    }
+                });
             } catch { }
         }
         presenceSessionId = null;
@@ -982,24 +1016,84 @@ export const SessionTimerManager = {
     }
 };
 
-export function printTimerConfigDetails(title: string, config = SessionTimerManager.getConfig()) {
-    console.log(chalk.bold.cyan(`\n${title}`));
-    console.log(chalk.gray('------------------------------------------------------------'));
-    console.log(`${chalk.bold('Project inactivity lock:')} ${formatMs(config.projectInactivityMs)}`);
-    console.log(`${chalk.bold('Browser login timeout:')} ${formatMs(config.browserLoginTimeoutMs)}`);
-    console.log(`${chalk.bold('Owner bypass timeout:')} ${formatMs(config.ownerBypassTimeoutMs)}`);
-    console.log(`${chalk.bold('Token refresh skew:')} ${formatMs(config.tokenRefreshSkewMs)}`);
-    console.log(`${chalk.bold('Global relogin marker:')} ${config.forcedReauthAt > 0 ? new Date(config.forcedReauthAt).toLocaleString() : 'inactive'}`);
-    console.log(`${chalk.bold('Source:')} ${config.source}`);
-    if (config.updatedBy) console.log(`${chalk.bold('Updated by:')} ${config.updatedBy}`);
-    console.log(`${chalk.bold('Updated at:')} ${new Date(config.updatedAt).toLocaleString()}`);
+export function buildTimerConfigDetailsText(title: string, config = SessionTimerManager.getConfig()): string {
+    const lines = [
+        chalk.bold.cyan(`\n${title}`),
+        chalk.gray('------------------------------------------------------------'),
+        `${chalk.bold('Interactive TUI inactivity lock:')} ${formatMs(config.projectInactivityMs)}`,
+        `${chalk.bold('Auth browser window timeout:')} ${formatMs(config.browserLoginTimeoutMs)}`,
+        `${chalk.bold('Owner bypass reuse window:')} ${formatMs(config.ownerBypassTimeoutMs)}`,
+        `${chalk.bold('Stored token refresh lead:')} ${formatMs(config.tokenRefreshSkewMs)}`,
+        `${chalk.bold('Global relogin marker:')} ${config.forcedReauthAt > 0 ? new Date(config.forcedReauthAt).toLocaleString() : 'inactive'}`,
+        `${chalk.bold('Source:')} ${SessionTimerManager.getGlobalTimerSummary().sourceLabel}`
+    ];
+
+    if (config.updatedBy) {
+        lines.push(`${chalk.bold('Updated by:')} ${config.updatedBy}`);
+    }
+
+    lines.push(`${chalk.bold('Updated at:')} ${new Date(config.updatedAt).toLocaleString()}`);
     const validationIssues = SessionTimerManager.getTimerValidationIssues();
     if (validationIssues.length > 0) {
-        console.log(chalk.gray('------------------------------------------------------------'));
-        console.log(chalk.redBright('Timer validation issues detected:'));
+        lines.push(chalk.gray('------------------------------------------------------------'));
+        lines.push(chalk.redBright('Timer validation issues detected:'));
         for (const issue of validationIssues) {
-            console.log(chalk.redBright(`  - ${issue.key}: ${issue.message} [current=${String(issue.rawValue)}]`));
+            lines.push(chalk.redBright(`  - ${issue.key}: ${issue.message} [current=${String(issue.rawValue)}]`));
         }
     }
-    console.log(chalk.gray('------------------------------------------------------------'));
+    lines.push(chalk.gray('------------------------------------------------------------'));
+    return lines.join('\n');
+}
+
+export function printTimerConfigDetails(title: string, config = SessionTimerManager.getConfig()) {
+    console.log(buildTimerConfigDetailsText(title, config));
+}
+
+export async function runGlobalTimersViewer(title = '⏱️  Global Session Timers'): Promise<void> {
+    try {
+        await SessionTimerManager.refreshFromRemote();
+        await SessionTimerManager.startRealtimeSync();
+    } catch {
+        // Best-effort: cached values are still useful here.
+    }
+
+    return new Promise((resolve) => {
+        let closed = false;
+        let interval: NodeJS.Timeout | null = null;
+        const openedAltScreen = !io.isAlternateScreenEnabled();
+        if (openedAltScreen) {
+            io.enableAlternateScreen();
+        }
+
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            if (interval) clearInterval(interval);
+            io.release(handler);
+            process.stdout.write('\x1b[?25h');
+            process.stdout.write('\x1b[0m');
+            if (openedAltScreen) {
+                io.disableAlternateScreen();
+            }
+            resolve();
+        };
+
+        const render = () => {
+            if (closed) return;
+            const frame = `${buildTimerConfigDetailsText(title, SessionTimerManager.getConfig())}\n\n${chalk.gray("Press 'q' to return.")}`;
+            process.stdout.write('\x1b[?25l');
+            process.stdout.write('\x1b[H\x1b[J');
+            process.stdout.write(frame);
+        };
+
+        const handler = (_key: Buffer, str: string) => {
+            if (str === 'q' || str === 'Q' || str === '\u001B' || str === '\u0003') {
+                close();
+            }
+        };
+
+        io.consume(handler);
+        render();
+        interval = setInterval(render, 1000);
+    });
 }

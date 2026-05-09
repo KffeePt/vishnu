@@ -6,18 +6,18 @@ export const getDevDojoOptions = async (state: GlobalState): Promise<MenuOption[
     const options: MenuOption[] = [];
 
     options.push({ label: '--- Environment & Run ---', value: 'sep-env', type: 'separator' });
+    if (projectType === 'flutter') {
+        options.push(
+            { label: '🛠️  Dev Ops & Runners', value: 'dev-ops-menu', action: { type: 'navigate', target: 'dev-ops-menu' } }
+        );
+    }
+
     options.push(
         { label: '🥷  Dev Environment', value: 'dev-dojo-mode', action: { type: 'script', handler: 'dev-dojo-mode' } }
     );
     options.push(
         { label: '🧹 Close Dev Environment', value: 'dev-dojo-close', action: { type: 'script', handler: 'dev-dojo-close' } }
     );
-
-    if (projectType === 'flutter') {
-        options.push(
-            { label: '🛠️  Dev Ops & Runners', value: 'dev-ops-menu', action: { type: 'navigate', target: 'dev-ops-menu' } }
-        );
-    }
 
     if (projectType === 'nextjs') {
         options.push(

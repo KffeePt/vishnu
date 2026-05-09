@@ -14,6 +14,7 @@ interface UserConfig {
     authMode?: 'normal' | 'owner-bypass';
     authBypassExpiresAt?: number;
     authBypassStartedAt?: number;
+    authStorageVersion?: string;
 }
 
 const DEFAULT_CONFIG: UserConfig = {
@@ -22,7 +23,8 @@ const DEFAULT_CONFIG: UserConfig = {
     cachedUser: null,
     authMode: 'normal',
     authBypassExpiresAt: 0,
-    authBypassStartedAt: 0
+    authBypassStartedAt: 0,
+    authStorageVersion: 'legacy'
 };
 
 export const UserConfigManager = {
@@ -141,6 +143,23 @@ export const UserConfigManager = {
         config.authMode = 'normal';
         config.authBypassExpiresAt = 0;
         config.authBypassStartedAt = 0;
+        try {
+            fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+        } catch (e) {
+            console.error('Failed to save config:', e);
+        }
+    },
+
+    getAuthStorageVersion: (): string => {
+        const config = UserConfigManager.ensureConfig();
+        return typeof config.authStorageVersion === 'string' && config.authStorageVersion.trim()
+            ? config.authStorageVersion.trim()
+            : 'legacy';
+    },
+
+    setAuthStorageVersion: (version: string) => {
+        const config = UserConfigManager.ensureConfig();
+        config.authStorageVersion = version;
         try {
             fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
         } catch (e) {
